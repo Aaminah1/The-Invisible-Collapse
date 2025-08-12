@@ -221,3 +221,49 @@ function resizeCanvas(){
     mouseY = e.clientY;
   });
 })();
+
+// ===== SCROLL-DRIVEN HANDOFF: SCENE 1 -> FOREST =====
+gsap.registerPlugin(ScrollTrigger);
+
+// flag to pause particle RAF when handoff is done
+let rafOn = true;
+
+// replace your animateParticles with a guard (tiny edit)
+const _animateParticles = animateParticles; // keep reference if needed
+function animateParticles(){
+  if (!rafOn) return;
+  drawParticles();
+  requestAnimationFrame(animateParticles);
+}
+
+// Crossfade timeline: runs as #scene3 moves from bottom of viewport to top
+const handoffTL = gsap.timeline({
+  scrollTrigger: {
+    trigger: "#scene3",
+    start: "top 95%",   // when forest scene is just entering the viewport
+    end:   "top top",   // when it snaps to the top (your pin starts)
+    scrub: true,
+    onUpdate: (self) => {
+      // fade particle alpha in sync with progress (soft)
+      const p = self.progress;
+      // ease the canvas opacity down; keep drawing until we fully leave
+      gsap.to("#particleCanvas", { opacity: 1 - p, overwrite: "auto", duration: 0 });
+    },
+    onLeave: () => {
+      // stop particle loop once we’re fully on Scene 3
+      rafOn = false;
+    },
+    onLeaveBack: () => {
+      // if user scrolls back up, re-enable particles + canvas opacity
+      rafOn = true;
+      requestAnimationFrame(animateParticles);
+      gsap.set("#particleCanvas", { opacity: 1 });
+    }
+  }
+});
+
+// Animate landing elements out during the handoff
+handoffTL
+  .to("#mainLine",  { y: -20, opacity: 0, ease: "power2.out" }, 0)
+  .to("#subText",   { y: -10, opacity: 0, ease: "power2.out" }, 0)
+  .to("#scrollHint",{ opacity: 0, ease: "power2.out" },          0);
