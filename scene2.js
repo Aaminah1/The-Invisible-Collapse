@@ -1,4 +1,3 @@
-// =================== main.js ===================
 gsap.registerPlugin(ScrollTrigger);
 
 // ---------- CONSTANTS ----------
