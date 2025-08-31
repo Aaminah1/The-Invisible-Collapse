@@ -1,0 +1,145 @@
+:root { --forestSizeMult: 1.60; }  /* global size knob */
+#leafCanvas{
+  position:absolute;
+  inset:0;
+  width:100%;
+  height:100%;
+  z-index: 9;          /* above trees; adjust if you add UI */
+  pointer-events:none; /* needed for mouse-sweep */
+}
+
+.section-forest{
+  position: relative;
+  z-index: 4;
+  width: 100%;
+  min-height: clamp(64vh, 72vh, 84vh);  /* no more top cuts */
+  display: grid;
+  grid-template-rows: auto auto;
+  align-items: end;
+  background: transparent;
+  overflow: visible;                    /* IMPORTANT */
+}
+
+/* back row behind, subtly darker & blurred */
+.tree-row-back{
+  position: relative;
+  width: min(1200px, 92vw);
+  margin: 0 auto;
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: clamp(12px, 2.2vw, 26px);
+  filter: blur(1px) brightness(0.9) saturate(0.95);
+  opacity: 0;
+  transform: none;
+}
+
+
+
+/* front row: absolute children for art-directed spacing */
+.tree-row{
+  position: relative;
+  width: min(1200px, 94vw);
+  margin: 0 auto;
+  height: clamp(46vh, 56vh, 64vh);
+  overflow: visible;
+}
+
+/* each tree wrapper sits on the “ground” and can be nudged X and Y */
+.tree-wrap{
+  position: absolute;
+  bottom: var(--y, 0px);                             /* per-tree raise */
+  transform: translateX(calc(-50% + var(--dx,0px)));/* per-tree nudge */
+  display: inline-block;
+   transform-origin: bottom center;
+}
+
+.tree, .tree-back{
+  object-fit: contain;
+  transform-origin: bottom center;
+  opacity: 0;
+  clip-path: inset(100% 0 0 0);
+  will-change: transform, opacity, clip-path, filter;
+  z-index: 1;
+}
+
+/* tiny asymmetry + idle sway (optional) */
+@keyframes sway{0%{transform:translateY(var(--ty,0)) rotate(-.2deg) scaleX(var(--sx,1))}50%{transform:translateY(calc(var(--ty,0)+.22vh)) rotate(.25deg) scaleX(var(--sx,1))}100%{transform:translateY(var(--ty,0)) rotate(-.2deg) scaleX(var(--sx,1))}}
+.tree.sway,.tree-back.sway{animation:sway 6s ease-in-out infinite;animation-delay:var(--d,0s)}
+
+/* stack 4 stage images per tree, perfectly overlapped */
+.tree-stack{
+  position: relative;
+  height: var(--hpx);              /* set from JS */
+  pointer-events: none;
+}
+.tree-img{
+  position: absolute;
+  left: 0; bottom: 0;
+  height: 100%; width: auto;       /* keep aspect */
+  opacity: 0;                      /* we’ll fade between them */
+  will-change: opacity;
+}
+/* overlays that sit exactly on top of the base tree image */
+/* overlays sit on top but are hidden until a stage is active */
+.tree-stage{
+  position:absolute;
+  left:0; bottom:0;
+  height:var(--hpx);   /* set by JS on the wrapper */
+  width:auto;
+  display:none;        /* <- start hidden */
+  opacity:1;          /* no crossfade; we hard-switch */
+  pointer-events:none;
+  transform-origin:bottom center;
+  will-change:opacity;
+}
+/* Make sure #bg is fixed full-viewport (you likely already have this) */
+#bg{
+  position: fixed;
+  inset: 0;
+  pointer-events: none; /* background shouldn't catch clicks */
+}
+
+/* A generic class for our fixed overlays inside #bg */
+#bg .bg-fx{
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 10; /* higher than your .bg-layer far/mid/near; still behind content */
+}
+
+/* Tints for color grading the parallax background */
+#bgTintWarm,
+#bgTintCold{
+  mix-blend-mode: soft-light;   /* gentle grade without crushing */
+  opacity: 0;
+  transition: opacity 0.2s linear; /* smooth minor jumps while scrubbing */
+}
+
+/* Warm, late-summer ambience */
+#bgTintWarm{
+  background:
+    radial-gradient(120% 90% at 50% 10%, rgba(255,218,160,.55), rgba(255,170,120,.30) 40%, rgba(0,0,0,0) 70%),
+    linear-gradient(#ffe7c5, #b7e0ff);
+}
+
+/* Cold, bleak ambience */
+#bgTintCold{
+  background:
+    radial-gradient(120% 90% at 50% 10%, rgba(70,90,120,.55), rgba(30,40,60,.40) 40%, rgba(0,0,0,0) 70%),
+    linear-gradient(#6f7f92, #2b3644);
+}
+
+/* Fog sprites (sit above your bg images, and below content/trees) */
+#bgFog .fog{
+  position: fixed;
+  width: 160%;
+  left: -30%;
+  bottom: 12%;
+  opacity: 0;
+  filter: blur(1px);
+  will-change: transform, opacity;
+}
+#bgFog .f1{ bottom: 20%; width: 170%; left: -35%; }
+#bgFog .f2{ bottom: 12%; width: 160%; left: -30%; }
+#bgFog .f3{ bottom: 24%; width: 180%; left: -40%; }

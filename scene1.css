@@ -1,51 +1,56 @@
 /* scene1.css */
 #landing{
-    position:relative;
-    width:100%;
-    height:100vh;
-    display:flex;
-    flex-direction:column;
-    justify-content:center;
-    align-items:center;
-    background:transparent;
-    z-index:1;
-    color:#4b4a4a; 
-    font-family: "Courier Prime", monospace;
+  position:relative;
+  width:100%;
+  height:100vh;
+  display:flex;
+  flex-direction:column;
+  justify-content:center;
+  align-items:center;
+ background: linear-gradient(to bottom, #fff 0%, #fff 72%, rgba(255,255,255,0) 100%);
+  z-index:1;
+  color:#4b4a4a;
+  font-family: "Courier Prime", monospace;
 }
 
 #mainLine{
-    display:flex;
-    align-items:center;
-    gap:4px;
-    font-size:3rem;
-    letter-spacing:1.5px;
+  display:flex;
+  align-items:center;
+  gap:4px;
+  font-size:3rem;
+  letter-spacing:1.5px;
+   z-index:3;
 }
 
 #mainText,#dot{
-    opacity:0;
-    transition:opacity 1s ease-in-out;  
-    font-family:"Special Elite", serif;
+  opacity:0;
+  transition:opacity 1s ease-in-out;
+  font-family:"Special Elite", serif;
+  z-index:3;
 }
 
-
-
 #subText{
-    font-size:1.2rem;
-        margin-top:10px;
-    }
+  font-size:1.2rem;
+  margin-top:10px;
+  z-index:3;
+}
 
-    #subText.hidden{
-  display:block;       /* instead of display:none */
-  visibility:hidden;   /* not visible, but space is reserved */
+/* keep layout space but hide visually until reveal */
+#subText.hidden{
+  display:block;
+  visibility:hidden;
   opacity:0;
 }
 
 #scrollHint{
-    position:absolute;
-    bottom:40px;
-    font-size:1rem;animation:bounce 2s infinite;
-    opacity:0;transition:opacity 1s ease-in-out;
-    cursor:pointer;
+  position:absolute;
+  bottom:40px;
+  font-size:1rem;
+  animation:bounce 2s infinite;
+  opacity:0;
+  transition:opacity 1s ease-in-out;
+  cursor:pointer;
+  z-index:3;
 }
 
 /* lock the page until we say so */
@@ -55,17 +60,19 @@
   overscroll-behavior: none;/* stop chaining/bounce */
 }
 
-
 @keyframes bounce{
-    0%,100%{transform:translateY(0)}50%{transform:translateY(5px)}
+  0%,100%{transform:translateY(0)}
+  50%{transform:translateY(5px)}
 }
 
 #particleCanvas{
-    position:fixed;
-    top:0;
-    left:0;
-    width:100vw;
-    height:100vh;
-    z-index:0;pointer-events:none;
+  position:fixed;           /* so it stays during the bridge fade */
+  top:0;
+  left:0;
+  width:100vw;
+  height:100vh;
+  z-index:2;
+  pointer-events:none;
 }
-.hidden{display:none;}
+
+.hidden{ display:none; }

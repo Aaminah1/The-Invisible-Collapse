@@ -1,0 +1,78 @@
+/* reset */
+*{margin:0;padding:0;box-sizing:border-box;}
+html,body{height:100%;}
+body{font-family: system-ui, -apple-system, "Segoe UI", Roboto, Inter, Arial; color:#222;}
+
+/* ---- fixed background root ---- */
+#bg{
+  position:fixed; inset:0; z-index:0; pointer-events:none; overflow:hidden;
+}
+
+/* gradient sky (we tween its opacity) */
+:root{
+  --sky-top:#f6d58a;
+  --sky-mid:#c8894f;
+  --sky-bot:#6b3f2b;
+}
+#bg-sky{
+  position:absolute; inset:0;
+  background:linear-gradient(to bottom,
+    var(--sky-top),
+    var(--sky-mid) 55%,
+    var(--sky-bot));
+  opacity:0;                 /* JS fades this in */
+  transform:translateY(32px) scaleY(.97);
+  transform-origin:bottom center;
+  filter:saturate(.94) contrast(.96);
+  will-change:opacity,transform,filter;
+}
+
+/* soft white feather that blends the white page into the sky */
+#bg-whiteBlend{
+  position:absolute; left:0; right:0;
+  height:36vh;                  /* JS shrinks this to 0 */
+  top:0;                        /* sits at the top */
+  background:linear-gradient(to bottom, #ffffff 0%, rgba(255,255,255,0) 100%);
+  opacity:1;
+  will-change:height,opacity;
+}
+
+/* layers: bottom-locked, not cropped, slightly wider than viewport */
+.bg-layer{
+  position:absolute; bottom:0; left:50%; transform:translateX(-50%);
+  width:110vw; height:auto; max-width:none; display:block;
+  opacity:0;                   /* JS fades in */
+  will-change:transform,opacity,filter;
+
+  /* soften any straight top edge (watercolor-y) */
+  -webkit-mask-image: linear-gradient(to top, #000 86%, transparent 100%);
+          mask-image: linear-gradient(to top, #000 86%, transparent 100%);
+}
+.bg-layer.far  { z-index:1; filter:saturate(.92) contrast(.96); }
+.bg-layer.mid  { z-index:2; }
+.bg-layer.near { z-index:3; }
+
+/* ---- dummy page sections (only to produce scroll) ---- */
+.page{
+  position:relative; z-index:1; /* content sits above the fixed bg */
+  min-height:100vh; display:flex; flex-direction:column;
+  align-items:center; justify-content:center;
+  padding:4rem 2rem;
+}
+
+.page-1{
+  /* pure white top — but we add a tiny bottom fade so there’s never a hard line */
+  background:
+    linear-gradient(to bottom, #fff 0%, #fff 70%, rgba(255,255,255,0) 100%);
+}
+.page-1 h1{font-size:clamp(2.2rem, 6vw, 4rem); letter-spacing:.04em;}
+.page-1 p{opacity:.7; margin-top:.5rem;}
+.page-1 .hint{position:absolute; bottom:1.5rem; opacity:.6;}
+
+#bridge{height:120vh;} /* length of the transition region; tweakable */
+
+.page-2{
+  background:transparent; /* now you see the full background */
+  color:#fff; text-shadow:0 1px 4px rgba(0,0,0,.28);
+}
+.page-2 h2{font-size:clamp(1.8rem, 4.5vw, 3rem);}
