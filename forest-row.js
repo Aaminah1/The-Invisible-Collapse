@@ -11,6 +11,7 @@ const SRC = {
 
 /* ---------- helpers ---------- */
 const clamp = (min, v, max) => Math.max(min, Math.min(max, v));
+const clampSpin = (v, max) => Math.max(-max, Math.min(max, v)); // unified
 const vh    = pct => (window.innerHeight * pct) / 100;
 function getSizeMult(){
   const v = getComputedStyle(document.documentElement)
@@ -265,14 +266,39 @@ function cacheTreeRects(){
 const rand = (a,b)=>a + Math.random()*(b-a);
 
 let falling = [], settled = [], dust = [];
-const mouse = { x:-1, y:-1 };
-window.addEventListener("mousemove", (e)=>{
-  if (!leafCanvas) return;
-  const r = leafCanvas.getBoundingClientRect();
-  mouse.x = e.clientX - r.left;
-  mouse.y = e.clientY - r.top;
-});
-window.addEventListener("mouseleave", ()=>{ mouse.x=-1; mouse.y=-1; });
+
+// pointer state (with velocity for throwing)
+const mouse = { x:-1, y:-1, vx:0, vy:0, lastX:-1, lastY:-1, lastT:0, down:false };
+
+if (leafCanvas){
+  leafCanvas.style.touchAction = "none";
+  // Let clicks pass to trees; we’ll listen on window
+  leafCanvas.style.pointerEvents = "none";
+
+  // track pointer anywhere (trees/overlays won't block)
+  window.addEventListener("pointermove", (e)=>{
+    const r = leafCanvas.getBoundingClientRect();
+    const x = e.clientX - r.left, y = e.clientY - r.top;
+    const t = e.timeStamp || performance.now();
+
+    if (mouse.lastT){
+      const dt = Math.max(1, t - mouse.lastT);    // ms
+      mouse.vx = (x - mouse.lastX) / dt * 16.67;  // ~per 60fps frame
+      mouse.vy = (y - mouse.lastY) / dt * 16.67;
+    }
+    mouse.x = x; mouse.y = y;
+    mouse.lastX = x; mouse.lastY = y; mouse.lastT = t;
+  }, {passive:true});
+
+  function resetMouse(){
+    mouse.x = mouse.y = -1; mouse.vx = mouse.vy = 0; mouse.down = false;
+    if (dragPick.active && pickups[dragPick.idx]) pickups[dragPick.idx].dragging = false;
+    dragPick.active = false; dragPick.idx = -1;
+  }
+  window.addEventListener("pointerleave", resetMouse, {passive:true});
+  window.addEventListener("blur", resetMouse, {passive:true});
+}
+
 
 // round-robin across trees so every tree sheds
 let rrIndex = 0;
@@ -325,13 +351,36 @@ function spawnDustPuff(rect){
 const PICKUP_SRC = {
   apple:  "images/apple.png",
   flower: "images/flower.png",
-  twig:   "images/twig.png"
+  twig:   "images/twig2.png"
 };
 const PICKUP_PRESET = {
   apple:  { baseSize:[56,56], termVy:3.2, dragY:0.96 },
   flower: { baseSize:[44,44], termVy:2.4, dragY:0.965},
   twig:   { baseSize:[160,26],termVy:3.0, dragY:0.965}
 };
+
+// Per-kind "feel"
+const PICKUP_PHYS = {
+  apple:  {
+    airDrag:0.962, termVy:3.2, wind:0.18,
+    bounce:0.18, friction:0.86,
+    cursorR:80,  cursorF:0.8,  throwMul:0.8,
+    // roll tuning
+    rollCouple:0.0026,   // how much horizontal motion turns into spin
+    rotClamp:0.06,       // max roll rate
+    rotDampAir:0.96,     // bleed spin fast in the air
+    rotDampGround:0.90,  // but keep some roll on ground
+    grabK:0.10, grabDmp:0.82,
+    rotInertia:1.0
+  },
+  flower: { airDrag:0.975, termVy:2.2, wind:0.95, bounce:0.35, friction:0.80,
+            cursorR:130, cursorF:1.6,  throwMul:1.2, rollCouple:0.0006, rotClamp:0.10,
+            rotDampAir:0.98,  rotDampGround:0.94, grabK:0.18, grabDmp:0.86, rotInertia:0.9 },
+  twig:   { airDrag:0.968, termVy:3.0, wind:0.45, bounce:0.22, friction:0.84,
+            cursorR:100, cursorF:1.0,  throwMul:1.0, rollCouple:0.0010, rotClamp:0.07,
+            rotDampAir:0.982, rotDampGround:0.92, grabK:0.12, grabDmp:0.84, rotInertia:1.6 }
+};
+
 
 let pickups = [];                         // active pickups
 let dragPick = { active:false, idx:-1 };  // dragging state
@@ -361,10 +410,11 @@ function spawnPickup(kind, treeIdx, clickClientX){
   if (kind==="twig"){ w=90+Math.random()*60; h=18+Math.random()*12; }
 
   const side = (frac-0.5);
-const spin = (kind==="flower") ? (Math.random()-0.5)*0.30 + side*0.12 :
-             (kind==="apple")  ? 0 : // apples start unspun; they'll get tiny roll on ground
+  const spin = (kind==="flower") ? (Math.random()-0.5)*0.30 + side*0.12 :
+               (kind==="apple")  ? 0 :
                                    (Math.random()-0.5)*0.10 + side*0.05;
 
+  const ph = PICKUP_PHYS[kind];
 
   pickups.push({
     id: Math.random().toString(36).slice(2),
@@ -373,31 +423,61 @@ const spin = (kind==="flower") ? (Math.random()-0.5)*0.30 + side*0.12 :
     vy: 0,
     rot: Math.random()*Math.PI*2,
     rVel: spin,
-    termVy: cfg.termVy, dragY: cfg.dragY,
+    termVy: ph.termVy,         // per-kind
+    dragY: ph.airDrag,         // per-kind
     born: performance.now(),
     bruised: 0, snapped:false,
-    dragging:false, dead:false
+    dragging:false, dead:false,
+    grabDX:0, grabDY:0,
+    ph
   });
 }
 
-// drag handling on the canvas
+// drag handling on the page (pick up, hold, throw)
 if (leafCanvas){
-  leafCanvas.addEventListener("pointerdown", e=>{
+  window.addEventListener("pointerdown", (e)=>{
     const r = leafCanvas.getBoundingClientRect();
+    // only if inside the canvas rectangle
+    if (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom) return;
+    // ignore clicks on trees so their click-to-spawn still works
+    if (e.target && e.target.closest && e.target.closest(".tree-wrap")) return;
+
     const mx = e.clientX - r.left, my = e.clientY - r.top;
-    // find nearest pickup
-    let best=-1, bd=90;
-    pickups.forEach((p,i)=>{ const d=Math.hypot(p.x-mx,p.y-my); if(d<bd){bd=d;best=i;} });
-    if (best>=0){
-      dragPick.active=true; dragPick.idx=best; pickups[best].dragging=true;
-    }
-  });
-  ["pointerup","pointerleave","pointercancel"].forEach(evt=>{
-    leafCanvas.addEventListener(evt, ()=>{
-      if (dragPick.active && pickups[dragPick.idx]) pickups[dragPick.idx].dragging=false;
-      dragPick.active=false; dragPick.idx=-1;
+
+    // choose nearest pickup under cursor
+    let best = -1, bestD = 1e9;
+    pickups.forEach((p,i)=>{
+      const rad = Math.max(p.w, p.h)*0.5 + 18;
+      const d = Math.hypot(p.x - mx, p.y - my);
+      if (d < rad && d < bestD){ best = i; bestD = d; }
     });
-  });
+
+    if (best >= 0){
+      const p = pickups[best];
+      dragPick.active = true; dragPick.idx = best;
+      p.dragging = true;
+      p.grabDX = p.x - mx;    // keep offset so item doesn't jump
+      p.grabDY = p.y - my;
+      mouse.down = true;
+    }
+  }, {passive:true});
+
+  const release = ()=>{
+    mouse.down = false;
+    if (dragPick.active){
+      const p = pickups[dragPick.idx];
+      if (p){
+        // throw impulse from pointer velocity (weighted)
+        const mul = 0.35 * (p.ph?.throwMul ?? 1);
+        p.vx += mouse.vx * mul;
+        p.vy += mouse.vy * mul;
+        p.dragging = false;
+      }
+    }
+    dragPick.active = false; dragPick.idx = -1;
+  };
+  window.addEventListener("pointerup", release, {passive:true});
+  window.addEventListener("pointercancel", release, {passive:true});
 }
 
 function shakeTree(wrap){
@@ -506,70 +586,98 @@ function leafLoop(){
 
   // ---------------- pickups (update + draw) ----------------
   const now = performance.now();
-    const clampSpin = (v, max) => Math.max(-max, Math.min(max, v));
   pickups = pickups.filter(p=>!p.dead);
-
 
   pickups.forEach(p=>{
     const ground = leafCanvas.height - (p.h/2) - GROUND_RISE_PX;
     const ageSec = (now - p.born)/1000;
 
     if (p.dragging){
-      // spring to cursor
-      const k=0.14, dmp=0.85;
-      const dx = mouse.x - p.x, dy = mouse.y - p.y;
-      p.vx += dx*k; p.vy += dy*k; p.vx*=dmp; p.vy*=dmp;
+      // spring to cursor (respect grab offset so it feels “held”), weighted
+      const k   = p.ph?.grabK   ?? 0.14;
+      const dmp = p.ph?.grabDmp ?? 0.85;
+      const tx = mouse.x + (p.grabDX||0);
+      const ty = mouse.y + (p.grabDY||0);
+      p.vx += (tx - p.x) * k;
+      p.vy += (ty - p.y) * k;
+      p.vx *= dmp; p.vy *= dmp;
     }else{
-      // gravity & breeze
+      // cursor push (like leaves) when nearby; per-kind radius/force
+      if (mouse.x >= 0){
+        const dx = p.x - mouse.x, dy = p.y - mouse.y;
+        const d  = Math.hypot(dx,dy);
+        const R  = p.ph?.cursorR ?? 100;
+        if (d < R && d > 0.001){
+          const f = (R - d)/R * (p.ph?.cursorF ?? 1.2);
+          p.vx += (dx/d) * f;
+          p.vy += (dy/d) * f - 0.10;   // a touch of lift
+          p.rVel += (Math.random()-0.5) * 0.02;
+          p.air = true;
+        }
+      }
+      // gravity & breeze (weighted)
       p.vy += G*0.7; p.vy *= p.dragY; if (p.vy > p.termVy) p.vy = p.termVy;
-      p.vx += WIND.x * (p.kind==="flower" ? 0.9 : p.kind==="twig" ? 0.45 : 0.25) * 0.15;
+      p.vx += WIND.x * (p.ph?.wind ?? 0.25) * 0.15;
     }
-// ---- angular behavior (apples spin in air, settle on ground) ----
-const clampSpin = (v, max) => Math.max(-max, Math.min(max, v)); // keep if not already defined here
+
+    // ---- angular behavior (per-kind damping) ----
+    // ---- angular behavior ----
 if (p.kind === "apple") {
-  if (p.y < ground - 0.5) {          // IN AIR
-    // sideways motion -> gentle spin
-    const target = clampSpin(p.vx * 0.03 + Math.sign(p.vx)*0.012, 0.16);
-    p.rVel += (target - p.rVel) * 0.08;          // ease toward target
-    p.rVel += (Math.random()-0.5) * 0.003;       // tiny turbulence
-  } else {                                       // ON / NEAR GROUND
-    p.rVel *= 0.90;                               // bleed out quickly
+  // No in-air spin: apples only roll once they’re on the ground
+  if (p.y < ground - 0.5) {
+    // bleed any residual spin away while airborne
+    p.rVel *= p.ph?.rotDampAir ?? 0.96;
+  } else {
+    // on ground: mild damping (the rolling feel comes from coupling below)
+    p.rVel *= p.ph?.rotDampGround ?? 0.90;
   }
 } else {
-  p.rVel *= 0.985;                                // default slow damping
+  // flowers/twigs: keep gentle air damping
+  p.rVel *= p.ph?.rotDampAir ?? 0.985;
 }
 
-
     // integrate
-    p.x += p.vx; p.y += p.vy; p.rot += p.rVel;
+    p.x += p.vx; p.y += p.vy;
+    const rotInertia = p.ph?.rotInertia ?? 1.0;
+    p.rot += p.rVel / rotInertia;
 
     // ground collision
     if (p.y > ground){
       if (Math.abs(p.vy) > 1.6){
         dust.push({ x: p.x, y: leafCanvas.height - rand(8,18), r: rand(2,5), a: rand(0.25,0.4), vx: rand(-0.6,0.6), vy: rand(1.4,2.6) });
-  if (p.kind === "twig" && !p.snapped && ageSec > 12 && Math.random() < 0.08){
+        if (p.kind === "twig" && !p.snapped && ageSec > 12 && Math.random() < 0.08){
           // snap twig into two fragments
           p.snapped = true;
           const mk = (w, vx)=>({
             id:Math.random().toString(36).slice(2), kind:"twig", img:p.img,
             x:p.x+(Math.random()-0.5)*10, y:ground-1, w, h:Math.max(18, p.h*0.9),
             vx:vx, vy:-1.2, rot:p.rot+(Math.random()-0.5)*0.2, rVel:(Math.random()-0.5)*0.06,
-            termVy:p.termVy, dragY:p.dragY, born:now, snapped:true, dragging:false, dead:false
+            termVy:p.termVy, dragY:p.dragY, born:now, snapped:true, dragging:false, dead:false, ph:p.ph
           });
           pickups.push(mk(p.w*0.55, -1.2), mk(p.w*0.35, 1.2));
         }
       }
-    p.y = ground;
-// softer bounce; keep a bit of horizontal so it rolls briefly
-p.vy *= -0.25;
-p.vx *= 0.78;
 
-if (p.kind === "apple") {
-  // convert a touch of horizontal motion into roll; clamp roll rate
-  p.rVel = clampSpin(p.rVel * 0.90 + p.vx * 0.0015, 0.05);
-} else {
-  p.rVel *= 0.92;
+      // settle on ground with per-kind bounce/friction/rolling
+      p.y  = ground;
+      p.vy *= -(p.ph?.bounce ?? 0.25);
+      p.vx *=  (p.ph?.friction ?? 0.78);
+// continuous roll coupling while on ground (not just on impact)
+const onGround = p.y >= ground - 0.5;
+if (p.kind === "apple" && onGround) {
+  const couple = p.ph?.rollCouple ?? 0.0015;
+  const clampR = p.ph?.rotClamp   ?? 0.05;
+  // convert some horizontal velocity into angular velocity
+  p.rVel = clampSpin(p.rVel * (p.ph?.rotDampGround ?? 0.90) + p.vx * couple, clampR);
 }
+
+      if (p.kind === "apple") {
+        const couple = p.ph?.rollCouple ?? 0.0015;
+        const clampR = p.ph?.rotClamp   ?? 0.05;
+        p.rVel = clampSpin(p.rVel * (p.ph?.rotDampGround ?? 0.90) + p.vx * couple, clampR);
+      } else {
+        p.rVel *= (p.ph?.rotDampGround ?? 0.92);
+      }
       if (Math.abs(p.vy) < 0.02) p.vy = 0;
       if (Math.abs(p.rVel) < 0.001) p.rVel = 0;
     }
@@ -577,15 +685,9 @@ if (p.kind === "apple") {
     // walls
     if (p.x < p.w/2){ p.x = p.w/2; p.vx *= -0.35; }
     if (p.x > leafCanvas.width - p.w/2){ p.x = leafCanvas.width - p.w/2; p.vx *= -0.35; }
-if (p.kind === "apple") {
-  // hard clamp each frame
-  p.rVel = clampSpin(p.rVel, 0.05);
-  // if resting (on ground with almost no horizontal motion), fade spin out fast
-  if (p.y >= ground - 0.5 && Math.abs(p.vx) < 0.15) {
-    p.rVel *= 0.90;
-    if (Math.abs(p.rVel) < 0.002) p.rVel = 0;
-  }
-}
+
+    // per-frame spin clamp
+    p.rVel = clampSpin(p.rVel, p.ph?.rotClamp ?? 0.05);
 
     // aging & decay visual
     let sat=1, bright=1, blur=0, alpha=1, scale=1;
@@ -627,12 +729,12 @@ if (p.kind === "apple") {
 
     // apple bruise overlay
     if (p.kind==="apple" && p.bruised>0){
-      const r = Math.max(12, p.w*0.18);
-      const g = lctx.createRadialGradient(0,0,4, 0,0,r);
+      const rr = Math.max(12, p.w*0.18);
+      const g = lctx.createRadialGradient(0,0,4, 0,0,rr);
       g.addColorStop(0, `rgba(90,45,35,${0.25*p.bruised})`);
       g.addColorStop(1, "rgba(90,45,35,0)");
       lctx.globalCompositeOperation = "multiply";
-      lctx.fillStyle = g; lctx.beginPath(); lctx.arc(0,0,r,0,Math.PI*2); lctx.fill();
+      lctx.fillStyle = g; lctx.beginPath(); lctx.arc(0,0,rr,0,Math.PI*2); lctx.fill();
       lctx.globalCompositeOperation = "source-over";
     }
 
