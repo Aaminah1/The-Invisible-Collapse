@@ -793,182 +793,276 @@ function updateLeavesForProgress(p){
 }
 
 /* ---------- BACKGROUND FOG (continuous drift) ---------- */
+/* ---------- BACKGROUND FOG (endless tiling + smoother Mid2/Bare) ---------- */
 (function BackgroundFog(){
-  let built = false, rafId = null, t = 0, prog = 0;
-  let f1, f2, f3;
+  let built = false, t = 0, prog = 0;
+  let L1, L2, L3;
 
-  function injectStyle(){
+  function css(){
     if (document.getElementById("bgfog-style")) return;
-    const css = `
-      #bg{ position: fixed; inset: 0; pointer-events:none; }
-      /* Fog above parallax, below trees/leaves */
-      #bg #bgFog{ position: fixed; inset: 0; pointer-events:none; z-index: 2; }
-      #bgFog .fog{
-        position: fixed; width:160%; left:-30%; bottom:12%;
-        opacity:0; filter:blur(1px); will-change:transform,opacity;
+    const s = document.createElement("style");
+    s.id = "bgfog-style";
+    s.textContent = `
+      #bg #bgFog{ position:fixed; inset:0; pointer-events:none; z-index:2; }
+      /* Each layer is a full-viewport div with repeat-x background so it never "runs out" */
+      #bgFog .layer{
+        position:fixed; inset:0;
+        background-repeat: repeat-x;
+        background-position: 0 0;
+        background-size: auto 90%;
+        will-change: background-position, opacity, transform, filter;
+        filter: blur(1px);
+        opacity: 0;
       }
-      #bgFog .f1{ bottom:20%; width:170%; left:-35%; }
-      #bgFog .f2{ bottom:12%; width:160%; left:-30%; }
-      #bgFog .f3{ bottom:24%; width:180%; left:-40%; }
+      /* slight different scales so parallax looks deeper */
+      #bgFog .l1{ background-size: auto 92%; }
+      #bgFog .l2{ background-size: auto 100%; }
+      #bgFog .l3{ background-size: auto 96%; }
     `;
-    const el = document.createElement("style");
-    el.id = "bgfog-style";
-    el.textContent = css;
-    document.head.appendChild(el);
+    document.head.appendChild(s);
   }
 
   function build(){
     if (built) return;
     const bg = document.getElementById("bg");
-    if (!bg){ console.warn("[Fog] #bg not found."); return; }
+    if (!bg) return;
 
-    injectStyle();
+    css();
 
-    const fogWrap = document.createElement("div");
-    fogWrap.id = "bgFog";
-    fogWrap.innerHTML = `
-      <img class="fog f1" src="images/fog1.png" alt="">
-      <img class="fog f2" src="images/fog2.png" alt="">
-      <img class="fog f3" src="images/fog3.png" alt="">
+    const wrap = document.createElement("div");
+    wrap.id = "bgFog";
+    wrap.innerHTML = `
+      <div class="layer l1"></div>
+      <div class="layer l2"></div>
+      <div class="layer l3"></div>
     `;
-    fogWrap.style.zIndex = "2";
-    bg.appendChild(fogWrap);
+    bg.appendChild(wrap);
 
-    f1 = fogWrap.querySelector(".f1");
-    f2 = fogWrap.querySelector(".f2");
-    f3 = fogWrap.querySelector(".f3");
+    L1 = wrap.querySelector(".l1");
+    L2 = wrap.querySelector(".l2");
+    L3 = wrap.querySelector(".l3");
 
-    const tick = () => {
-      t += 1/60; // ~seconds
-      const base = prog * 240;
+    // Set images once (PNG with soft edges works best)
+    L1.style.backgroundImage = 'url("images/fog1.png")';
+    L2.style.backgroundImage = 'url("images/fog2.png")';
+    L3.style.backgroundImage = 'url("images/fog3.png")';
 
-      // drift slows and nearly stops toward the end for "stillness"
-      const still = Math.max(0, 1 - Math.max(0, prog - 0.85) / 0.15); // 1→0 from 85% to end
-      const slow  = 0.5 + 0.5*still; // 1→0.5
-
-      if (f1) f1.style.transform =
-        `translate3d(${-base*0.06 - t*8*slow}px, ${ (Math.sin(t*0.6)*6 - 6)*slow }px, 0)`;
-      if (f2) f2.style.transform =
-        `translate3d(${ base*0.05 + t*10*slow}px, ${ (Math.cos(t*0.52)*8 - 4)*slow }px, 0)`;
-      if (f3) f3.style.transform =
-        `translate3d(${-base*0.03 - t*6*slow}px, ${ (Math.sin(t*0.44)*10)*slow }px, 0)`;
-
-      rafId = requestAnimationFrame(tick);
-    };
     tick();
-
     built = true;
   }
 
-  function segInfo(p){
-    const s = Math.max(0, Math.min(0.9999, p)) * 3;
-    const seg = Math.floor(s);   // 0,1,2
-    const t   = s - seg;         // 0..1
-    return { seg, t };
+  // small utility eases
+  const clamp01 = v => Math.max(0, Math.min(1, v));
+  const smooth = v => v*v*(3-2*v);
+
+  function tick(){
+    t += 1/60;
+
+    // drift speeds (px/sec in background-position)
+    const s1 = -18, s2 = 22, s3 = -12;
+
+    // gentle bob so it feels volumetric
+    const bob1 = Math.sin(t*0.55) * 6;
+    const bob2 = Math.cos(t*0.48) * 8;
+    const bob3 = Math.sin(t*0.42) * 10;
+
+    if (L1) L1.style.backgroundPosition = `${(t*s1).toFixed(2)}px ${bob1.toFixed(2)}px`;
+    if (L2) L2.style.backgroundPosition = `${(t*s2).toFixed(2)}px ${bob2.toFixed(2)}px`;
+    if (L3) L3.style.backgroundPosition = `${(t*s3).toFixed(2)}px ${bob3.toFixed(2)}px`;
+
+    requestAnimationFrame(tick);
   }
 
   function update(p){
-    build();
-    prog = p;
+  build();
+  if (!L1 || !L2 || !L3) return;
+  const clamp01 = v => Math.max(0, Math.min(1, v));
+  const smooth  = v => v*v*(3-2*v);
 
-    const { seg, t } = segInfo(p);
-    if (!f1 || !f2 || !f3) return;
+  const prog = clamp01(p);
+  const seg  = prog < 1/3 ? 0 : prog < 2/3 ? 1 : 2;
+  const tSeg = seg === 0 ? prog/(1/3)
+              : seg === 1 ? (prog-1/3)/(1/3)
+              : (prog-2/3)/(1/3);
+  const t = smooth(clamp01(tSeg));
 
-    // NO fog in Full
-    let o1 = 0, o2 = 0, o3 = 0;
+  let o1=0, o2=0, o3=0;
 
-    if (seg === 1){ // appears during Mid1->Mid2
-      const tt = Math.max(0, (t - 0.15) / 0.85);
-      o1 = 0.18 * tt;
-      o2 = 0.26 * tt;
-      o3 = 0.12 * tt;
-    } else if (seg === 2){ // densest in Mid2->Bare and a touch heavier at the end
-      o1 = 0.28 + 0.10*t;
-      o2 = 0.36 + 0.16*t + (p>0.92 ? 0.08*(p-0.92)/0.08 : 0);
-      o3 = 0.22 + 0.18*t + (p>0.92 ? 0.05*(p-0.92)/0.08 : 0);
-    }
+  if (seg === 1){
+    /* Mid2 build-up: present but not choking */
+    o1 = 0.18 + 0.12 * t;   // ~0.18 → 0.30
+    o2 = 0.24 + 0.18 * t;   // ~0.24 → 0.42
+    o3 = 0.14 + 0.10 * t;   // ~0.14 → 0.24
 
-    f1.style.opacity = o1.toFixed(3);
-    f2.style.opacity = o2.toFixed(3);
-    f3.style.opacity = o3.toFixed(3);
+    const filt = `saturate(${(1 - 0.08*t).toFixed(3)}) brightness(${(1 - 0.04*t).toFixed(3)})`;
+    L1.style.filter = `blur(1.2px) ${filt}`;
+    L2.style.filter = `blur(1.0px) ${filt}`;
+    L3.style.filter = `blur(1.4px) ${filt}`;
   }
+  else if (seg === 2){
+    /* Bare: clearly worse — denser + dirtier look */
+    const k = 0.35 + 0.65 * t; // overall density ramp in Bare
+    o1 = 0.30 + 0.28 * k;      // tops ~0.49
+    o2 = 0.38 + 0.34 * k;      // tops ~0.60–0.70
+    o3 = 0.22 + 0.26 * k;      // tops ~0.39–0.48
+
+    // “grime” filter: less blur, more contrast, darker & slightly desaturated
+    const grime = `grayscale(${(0.15 + 0.35*t).toFixed(3)}) contrast(${(1.05 + 0.25*t).toFixed(3)}) brightness(${(0.96 - 0.18*t).toFixed(3)}) saturate(${(1 - 0.20*t).toFixed(3)})`;
+    L1.style.filter = `blur(${(1.2 - 0.4*t).toFixed(2)}px) ${grime}`;
+    L2.style.filter = `blur(${(1.0 - 0.35*t).toFixed(2)}px) ${grime}`;
+    L3.style.filter = `blur(${(1.4 - 0.50*t).toFixed(2)}px) ${grime}`;
+  }
+
+  // Apply the opacities (seg 0 stays 0)
+  L1.style.opacity = o1.toFixed(3);
+  L2.style.opacity = o2.toFixed(3);
+  L3.style.opacity = o3.toFixed(3);
+}
+
 
   window.__fog__ = { build, update };
 })();
 
-/* ---------- BACKGROUND SKY (orange dawn → cold) + SUN + horizon belt ---------- */
-(function BackgroundSky(){
-  let built = false, sun, belt;
-  function css(){
+/* ---------- BACKGROUND SKY (expose sun center via CSS vars) ---------- */
+(function BackgroundSky() {
+  let built = false,
+    wrap,
+    sky,
+    sunWrap,
+    sunCore,
+    sunHalo,
+    horizonGlow;
+
+  function css() {
     if (document.getElementById("bgsky-style")) return;
     const el = document.createElement("style");
     el.id = "bgsky-style";
     el.textContent = `
+      #bg{ --sunX:50%; --sunY:20%; } /* defaults, updated during scroll */
       #bg #bgSky{position:fixed;inset:0;pointer-events:none;z-index:1}
-      #bgSky .sky{position:fixed;inset:0;transition:background 0.1s linear}
-      #bgSky .sun{
-        position:fixed; left:50%; width:26vmin; height:26vmin; border-radius:50%;
-        filter: blur(18px); transform:translate(-50%, -40%); opacity:.9;
-        background: radial-gradient(circle, rgba(255,190,90,.95), rgba(255,140,60,.45) 55%, rgba(255,160,60,0) 72%);
+      #bgSky .sky{position:fixed;inset:0;transition:background 0.08s linear}
+
+      .sunWrap{
+        position:fixed; left:50%; top:0;
+        width:32vmin; height:32vmin; transform:translate(-50%,-40%);
+        pointer-events:none; filter:saturate(1.1);
       }
-      #bgSky .belt{
+      .sunCore{
+        position:absolute; inset:0; border-radius:50%;
+        background: radial-gradient(circle at 50% 50%,
+          rgba(255,230,170,1) 0%,
+          rgba(255,200,120,0.95) 40%,
+          rgba(255,150,70,0.55) 68%,
+          rgba(255,140,60,0.00) 82%);
+        filter: blur(2px); opacity:.95;
+      }
+      .sunHalo{
+        position:absolute; inset:-18%; border-radius:50%;
+        background: radial-gradient(circle,
+          rgba(255,190,120,0.55) 0%,
+          rgba(255,170,90,0.35) 28%,
+          rgba(255,160,80,0.15) 56%,
+          rgba(255,160,80,0.00) 80%);
+        filter: blur(12px); opacity:.9; mix-blend-mode:screen;
+      }
+      .horizonGlow{
         position:fixed; inset:0; pointer-events:none;
-        background:
-          radial-gradient(120% 65% at 50% 92%,
-            rgba(255,180,90,.55), rgba(255,150,60,.35) 25%,
-            rgba(255,150,60,.12) 45%, rgba(0,0,0,0) 70%);
-        opacity:0; transition:opacity .12s linear;
-      }`;
+        background: radial-gradient(120% 70% at 50% 96%,
+          rgba(255,200,120,.72), rgba(255,160,80,.42) 28%,
+          rgba(255,140,60,.18) 46%, rgba(0,0,0,0) 70%);
+        opacity:0; transition:opacity .14s linear; mix-blend-mode:screen;
+      }
+    `;
     document.head.appendChild(el);
   }
-  function build(){
+
+  function build() {
     if (built) return;
-    const bg = document.getElementById("bg"); if (!bg) return;
+    const bg = document.getElementById("bg");
+    if (!bg) return;
     css();
-    const wrap = document.createElement("div");
-    wrap.id="bgSky"; wrap.innerHTML = `<div class="sky"></div><div class="sun"></div><div class="belt"></div>`;
+    wrap = document.createElement("div");
+    wrap.id = "bgSky";
+    wrap.innerHTML = `
+      <div class="sky"></div>
+      <div class="sunWrap"><div class="sunHalo"></div><div class="sunCore"></div></div>
+      <div class="horizonGlow"></div>`;
     bg.appendChild(wrap);
-    sun  = wrap.querySelector(".sun");
-    belt = wrap.querySelector(".belt");
+    sky = wrap.querySelector(".sky");
+    sunWrap = wrap.querySelector(".sunWrap");
+    sunCore = wrap.querySelector(".sunCore");
+    sunHalo = wrap.querySelector(".sunHalo");
+    horizonGlow = wrap.querySelector(".horizonGlow");
     built = true;
   }
-  const lerp=(a,b,t)=>a+(b-a)*t, clamp01=(x)=>Math.max(0,Math.min(1,x));
-  function mixHex(a,b,m){const ah=parseInt(a.slice(1),16),bh=parseInt(b.slice(1),16);
-    const ar=(ah>>16)&255, ag=(ah>>8)&255, ab=ah&255;
-    const br=(bh>>16)&255, bg=(bh>>8)&255, bb=bh&255;
-    const r=Math.round(lerp(ar,br,m)), g=Math.round(lerp(ag,bg,m)), bl=Math.round(lerp(ab,bb,m));
-    return `rgb(${r},${g},${bl})`;
-  }
-  function update(p){
-    build(); const sky = document.querySelector("#bgSky .sky"); if(!sky||!sun) return;
-    const seg = p<1/3?0:p<2/3?1:2; const t = (p*3 - seg);
 
-    const warmTop = `#ffb56b`, warmBot = `#ffd596`;
-    const coolTop = `#6f7f92`, coolBot = `#2b3644`;
-    const mix = seg===0 ? 0 : seg===1 ? Math.min(0.65, t*0.65) : 0.65 + Math.min(0.35,t*0.35);
-    const top = mixHex(warmTop, coolTop, clamp01(mix));
-    const bot = mixHex(warmBot, coolBot, clamp01(mix));
+  const clamp01 = (x) => Math.max(0, Math.min(1, x));
+  const lerp = (a, b, t) => a + (b - a) * t;
+  function mixHex(a, b, m) {
+    const ah = parseInt(a.slice(1), 16),
+      bh = parseInt(b.slice(1), 16);
+    const ar = (ah >> 16) & 255,
+      ag = (ah >> 8) & 255,
+      ab = ah & 255;
+    const br = (bh >> 16) & 255,
+      bg = (bh >> 8) & 255,
+      bb = bh & 255;
+    return `rgb(${Math.round(lerp(ar, br, m))},${Math.round(
+      lerp(ag, bg, m)
+    )},${Math.round(lerp(ab, bb, m))})`;
+  }
+
+  function update(p) {
+    build();
+    if (!sky || !sunWrap) return;
+
+    const seg = p < 1 / 3 ? 0 : p < 2 / 3 ? 1 : 2;
+    const t = p * 3 - seg;
+
+    // sky gradient
+    const top = mixHex("#ffb56b", "#6f7f92", seg === 0 ? 0 : seg === 1 ? Math.min(0.7, t * 0.7) : 1.0);
+    const bot = mixHex("#ffd9a0", "#2b3644", seg === 0 ? 0 : seg === 1 ? Math.min(0.7, t * 0.7) : 1.0);
     sky.style.background = `linear-gradient(${top}, ${bot})`;
 
-    const beltIn = seg===0 ? 1 : Math.max(0, 1 - t*1.4);
-    if (belt) belt.style.opacity = (0.9*beltIn).toFixed(3);
+    // sun path
+    const sunT = clamp01(p * 1.5);
+    const yPct = lerp(-40, 62, sunT);
+    const scale = lerp(1.0, 1.14, Math.pow(1 - sunT, 0.8));
+    sunWrap.style.transform = `translate(-50%, ${yPct}%) scale(${scale})`;
 
-    const sunT = clamp01(p*1.6);
-    const y = lerp(-40, 58, sunT);
-    sun.style.transform = `translate(-50%, ${y}%)`;
-    sun.style.opacity = String(lerp(0.95, 0.0, sunT));
+    // expose CSS vars for other layers to lock to the sun center
+    const bg = document.getElementById("bg");
+    if (bg) {
+      bg.style.setProperty("--sunX", "50%");
+      bg.style.setProperty("--sunY", `${yPct + 16}%`); // adjust if your sun art needs a different center
+    }
+
+    // visibility
+    const sunVis =
+      seg === 0 ? 1 : seg === 1 ? Math.max(0, 1 - t * 0.9) : Math.max(0, 0.1 - t * 0.1);
+    sunCore.style.opacity = (0.95 * sunVis).toFixed(3);
+    sunHalo.style.opacity = (0.9 * sunVis).toFixed(3);
+
+    const glowIn = seg === 0 ? 1 : Math.max(0, 1 - t * 1.2);
+    horizonGlow.style.opacity = (0.95 * glowIn).toFixed(3);
   }
+
   window.__sky__ = { build, update };
 })();
 
 /* ---------- DISTANT SILHOUETTES (dissolve + blur) ---------- */
-(function BackgroundSil(){
-  let built = false, near, far;
-  function build(){
+(function BackgroundSil() {
+  let built = false,
+    near,
+    far;
+  function build() {
     if (built) return;
-    const bg = document.getElementById("bg"); if (!bg) return;
+    const bg = document.getElementById("bg");
+    if (!bg) return;
     const el = document.createElement("div");
-    el.id="bgSil"; el.style.cssText="position:fixed;inset:0;pointer-events:none;z-index:1;";
+    el.id = "bgSil";
+    el.style.cssText =
+      "position:fixed;inset:0;pointer-events:none;z-index:1;";
     el.innerHTML = `
       <img class="far"  src="images/sil_far.png"  style="position:fixed;bottom:18%;left:-5%;width:110%;opacity:.6;filter:blur(0px);">
       <img class="near" src="images/sil_near.png" style="position:fixed;bottom:10%;left:-5%;width:110%;opacity:.8;filter:blur(0px);">`;
@@ -977,68 +1071,151 @@ function updateLeavesForProgress(p){
     near = el.querySelector(".near");
     built = true;
   }
-  const clamp01=(x)=>Math.max(0,Math.min(1,x));
-  function update(p){
-    build(); if(!near||!far) return;
-    far.style.opacity  = String(clamp01(.7  - p*0.5));
-    near.style.opacity = String(clamp01(.85 - p*0.35));
-    far.style.filter = `blur(${(p*3).toFixed(2)}px)`;
-    near.style.filter= `blur(${(p*1.8).toFixed(2)}px)`;
-    near.style.transform = `translateY(${p*6}px)`;
-    far.style.transform  = `translateY(${p*4}px)`;
+  const clamp01 = (x) => Math.max(0, Math.min(1, x));
+  function update(p) {
+    build();
+    if (!near || !far) return;
+    far.style.opacity = String(clamp01(0.7 - p * 0.5));
+    near.style.opacity = String(clamp01(0.85 - p * 0.35));
+    far.style.filter = `blur(${(p * 3).toFixed(2)}px)`;
+    near.style.filter = `blur(${(p * 1.8).toFixed(2)}px)`;
+    near.style.transform = `translateY(${p * 6}px)`;
+    far.style.transform = `translateY(${p * 4}px)`;
   }
   window.__sil__ = { build, update };
 })();
 
-/* ---------- GOD-RAYS → SMOG STREAKS ---------- */
-(function RaysToSmog(){
-  let built=false, rays, smog;
-  function css(){
+/* ---------- GOD-RAYS (locked to sun) → SMOG ---------- */
+(function RaysToSmog() {
+  let built = false,
+    raysWrap,
+    rays,
+    raysPulse,
+    smog,
+    rot = 0,
+    lastProg = 0;
+
+  function css() {
     if (document.getElementById("bgrays-style")) return;
     const s = document.createElement("style");
-    s.id="bgrays-style";
+    s.id = "bgrays-style";
     s.textContent = `
       #bg #bgRays{ position:fixed; inset:0; z-index:2; pointer-events:none; }
-      #bgRays .layer{ position:fixed; inset:0; opacity:0; will-change:opacity,transform,filter; }
+
+      /* main rays: conic fan centered at the sun */
       #bgRays .rays{
+        position:fixed; inset:-10% -20% -10% -20%;
         mix-blend-mode: screen;
-        background: repeating-linear-gradient( 115deg,
-          rgba(255,255,220,0.05) 0px, rgba(255,255,220,0.05) 6px,
-          rgba(255,255,220,0.00) 24px, rgba(255,255,220,0.00) 48px);
-        filter: blur(2px);
+        opacity:0;
+        background:
+          repeating-conic-gradient(
+            from 110deg at var(--sunX) var(--sunY),
+            rgba(255,245,210,0.14) 0deg,
+            rgba(255,245,210,0.14) 4deg,
+            rgba(255,245,210,0.00) 12deg,
+            rgba(255,245,210,0.00) 22deg
+          );
+        filter: blur(1.2px) saturate(1.05);
+        transform-origin: var(--sunX) var(--sunY);
+        will-change: transform, opacity, background;
       }
+
+      /* soft pulse glow also anchored to the sun */
+      #bgRays .raysPulse{
+        position:fixed; inset:-10% -20% -10% -20%;
+        mix-blend-mode: screen;
+        opacity:0;
+        background:
+          radial-gradient(70% 50% at var(--sunX) calc(var(--sunY) - 12%),
+            rgba(255,240,200,0.22),
+            rgba(255,220,150,0.10) 40%,
+            rgba(255,210,130,0.00) 68%);
+        filter: blur(6px);
+        transform-origin: var(--sunX) var(--sunY);
+        will-change: transform, opacity, background;
+      }
+
       #bgRays .smog{
+        position:fixed; inset:-10% -10%;
         mix-blend-mode: multiply;
-        background: repeating-linear-gradient( 90deg,
-          rgba(40,45,55,0.02) 0px, rgba(40,45,55,0.02) 8px,
-          rgba(40,45,55,0.10) 16px, rgba(40,45,55,0.10) 18px);
+        opacity:0;
+        background:
+          repeating-linear-gradient( 92deg,
+            rgba(36,40,48,0.00) 0px,
+            rgba(36,40,48,0.00) 10px,
+            rgba(36,40,48,0.12) 18px,
+            rgba(36,40,48,0.12) 22px),
+          repeating-linear-gradient( 86deg,
+            rgba(40,44,54,0.00) 0px,
+            rgba(40,44,54,0.00) 16px,
+            rgba(40,44,54,0.08) 23px,
+            rgba(40,44,54,0.08) 26px);
         filter: blur(0.6px) contrast(1.05);
-      }`;
+      }
+    `;
     document.head.appendChild(s);
   }
-  function build(){
-    if(built) return;
-    const bg=document.getElementById("bg"); if(!bg) return;
+
+  function build() {
+    if (built) return;
+    const bg = document.getElementById("bg");
+    if (!bg) return;
     css();
-    const w=document.createElement("div");
-    w.id="bgRays";
-    w.innerHTML=`<div class="layer rays"></div><div class="layer smog"></div>`;
-    bg.appendChild(w);
-    rays=w.querySelector(".rays");
-    smog=w.querySelector(".smog");
-    built=true;
+    raysWrap = document.createElement("div");
+    raysWrap.id = "bgRays";
+    raysWrap.innerHTML = `
+      <div class="rays"></div>
+      <div class="raysPulse"></div>
+      <div class="smog"></div>`;
+    bg.appendChild(raysWrap);
+    rays = raysWrap.querySelector(".rays");
+    raysPulse = raysWrap.querySelector(".raysPulse");
+    smog = raysWrap.querySelector(".smog");
+    built = true;
+    tick();
   }
+
+  function tick() {
+    // gentle rotation; slows near the end
+    const still = Math.max(0, 1 - Math.max(0, lastProg - 0.8) / 0.2);
+    rot += 0.06 * still;
+    // deg per frame-ish
+    if (rays) {
+      rays.style.transform      = `rotate(${rot}deg) translateZ(0)`;
+      raysPulse.style.transform = `rotate(${rot*0.6}deg) translateZ(0)`;
+    }
+    rafId = requestAnimationFrame(tick);
+  }
+
+  // public update
   function update(p){
     build(); if(!rays||!smog) return;
-    const seg = p<1/3?0:p<2/3?1:2; const t=(p*3 - seg);
-    const raysIn = seg===0 ? 1 : Math.max(0, 1 - t*1.4);
-    rays.style.opacity = (0.26 * raysIn).toFixed(3);
-    rays.style.transform = `translateY(${p*12}px) translateX(${p*6}px)`;
+    lastProg = p;
+    const seg = p<1/3?0:p<2/3?1:2; const t = (p*3 - seg);
 
-    const smogIn = seg<2 ? 0 : t;
-    smog.style.opacity = (0.12 + 0.22*smogIn).toFixed(3);
-    smog.style.transform = `translateY(${p*8}px)`;
+    // visibility curves:
+    // rays: strong in seg 0, fade across seg 1, gone in seg 2
+    const raysIn  = seg===0 ? 1 : Math.max(0, 1 - t*1.4);
+    const pulseIn = seg===0 ? 1 : Math.max(0, 1 - t*1.2);
+
+    // smog: minimal early, rises in seg 2
+    const smogIn  = seg<2 ? 0 : t;
+
+    // strengths
+    const base = 0.34;  // main rays
+    const pulse= 0.28;  // glow layer
+    rays.style.opacity      = (base  * raysIn).toFixed(3);
+    raysPulse.style.opacity = (pulse * pulseIn).toFixed(3);
+
+    // small parallax drift with progress
+    const yShift = p*10, xShift = p*5;
+    rays.style.transform      = `translate(${xShift}px, ${yShift}px) rotate(${rot}deg)`;
+    raysPulse.style.transform = `translate(${xShift*0.6}px, ${yShift*0.6}px) rotate(${rot*0.6}deg)`;
+
+    smog.style.opacity  = (0.10 + 0.22*smogIn).toFixed(3);
+    smog.style.transform = `translateY(${p*10}px)`;
   }
+
   window.__rays__ = { build, update };
 })();
 

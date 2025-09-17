@@ -19,23 +19,22 @@
 
   // ---------------- particles knobs ----------------
   const PARTICLES = {
-    TARGET: 50,       // calm amount at end of ramp
+    TARGET: 50,
     RAMP_MS: 3000,
     ALPHA_MAX: 0.16
   };
 
   // === Rain + smoothing config ===
   const RAIN = {
-    GRAV_MAX: 0.28,        // max downward accel when scrolling hard
-    BOOST_GAIN: 0.95,      // how much velocity amplifies gravity
-    VEL_NORM: 1800,        // divisor for self.getVelocity() normalization
-    // Damping:
-    AIR_RESIST_ACTIVE: 0.995,  // when raining
-    AIR_RESIST_IDLE_X: 0.995,  // idle sideways damping (keep drift alive)
-    AIR_RESIST_IDLE_Y: 0.965,  // idle vertical damping (stop the fall smoothly)
-    VEL_CLAMP: 3.0,            // cap speed so it doesn’t streak too far
-    IDLE_DRIFT_BOOST: 5,    // more lively while static
-    FALL_DECAY_MS: 520         // how long gravity fades to zero after scroll stops
+    GRAV_MAX: 0.28,
+    BOOST_GAIN: 0.95,
+    VEL_NORM: 1800,
+    AIR_RESIST_ACTIVE: 0.995,
+    AIR_RESIST_IDLE_X: 0.995,
+    AIR_RESIST_IDLE_Y: 0.965,
+    VEL_CLAMP: 3.0,
+    IDLE_DRIFT_BOOST: 5,
+    FALL_DECAY_MS: 520
   };
 
   const lerp = (a,b,t)=>a+(b-a)*t;
@@ -74,19 +73,57 @@
     window.removeEventListener('keydown', keyBlock);
   }
 
+  // ---------------- ONE-SHOT AUDIO with gesture priming ----------------
+  let particleSound = null;
+  let audioPrimed = false;
+  let animateStarted = false;
+  let whooshPlayed = false;
+
+  function createAudio() {
+    const a = new Audio("sounds/whoosh_soft.mp3");
+    a.preload = "auto";
+    a.volume = 0.6;
+    a.onerror = () => console.warn("[scene1] whoosh sound failed to load (check path: /sounds/whoosh_soft.mp3)");
+    return a;
+  }
+
+  function primeAudioOnce() {
+    if (audioPrimed) return;
+    particleSound = createAudio();
+    // Try to start and immediately pause to satisfy some browsers’ gesture requirement
+    particleSound.play().then(() => {
+      particleSound.pause();
+      particleSound.currentTime = 0;
+      audioPrimed = true;
+      // If particles already started but we couldn’t play earlier, play now
+      if (animateStarted && !whooshPlayed) {
+        try { particleSound.currentTime = 0; particleSound.play(); whooshPlayed = true; } catch {}
+      }
+    }).catch(() => {
+      // Even if play() rejects here, having created it during a gesture often unlocks later plays
+      audioPrimed = true;
+      if (animateStarted && !whooshPlayed) {
+        try { particleSound.currentTime = 0; particleSound.play(); whooshPlayed = true; } catch {}
+      }
+    });
+
+    window.removeEventListener("pointerdown", primeAudioOnce);
+    window.removeEventListener("touchstart", primeAudioOnce);
+    window.removeEventListener("keydown", primeAudioOnce);
+  }
+
   // ---------------- state ----------------
   let index = 0, mouseX = 0, mouseY = 0;
   let particles = [];
   let particleAlpha = 0;    // 0 -> ALPHA_MAX
-  let animateStarted = false;
-  let driftMul = 0.6;       // ramped up during intro (0.6 -> ~1.2)
-  let sizeMul  = 0.85;      // ramped up during intro
+  let driftMul = 0.6;
+  let sizeMul  = 0.85;
   let rafOn = true;
 
   // Rain state (smoothed)
-  let grav = 0;             // current applied gravity
-  let gravTarget = 0;       // target gravity set by scroll
-  let falloffTween = null;  // tween that brings gravTarget -> 0 when scroll stops
+  let grav = 0;
+  let gravTarget = 0;
+  let falloffTween = null;
 
   // ---------------- setup ----------------
   function resizeCanvas(){
@@ -151,16 +188,14 @@
   }
 
   function drawParticles(){
-    // Smoothly approach target gravity
     grav = lerp(grav, gravTarget, 0.14);
 
     pCtx.clearRect(0,0,pCanvas.width,pCanvas.height);
 
-    const idle = grav < 0.01; // treat as idle when gravity is tiny
+    const idle = grav < 0.01;
     const driftEff = driftMul * (idle ? RAIN.IDLE_DRIFT_BOOST : 1);
 
     for(const p of particles){
-      // subtle mouse repulsion
       const dx = p.x - mouseX;
       const dy = p.y - mouseY;
       const dist = Math.hypot(dx,dy);
@@ -169,11 +204,8 @@
         p.vy += dy/dist*0.01;
       }
 
-      // apply gravity only when scrolling (and smoothly via grav)
       p.vy += grav;
 
-      // damping: stronger vertical damping when idle to stop the fall,
-      // lighter damping sideways to keep the idle drift lively
       if (idle){
         p.vx *= RAIN.AIR_RESIST_IDLE_X;
         p.vy *= RAIN.AIR_RESIST_IDLE_Y;
@@ -182,15 +214,12 @@
         p.vy *= RAIN.AIR_RESIST_ACTIVE;
       }
 
-      // clamp velocities
       p.vx = Math.max(-RAIN.VEL_CLAMP, Math.min(RAIN.VEL_CLAMP, p.vx));
       p.vy = Math.max(-RAIN.VEL_CLAMP, Math.min(RAIN.VEL_CLAMP, p.vy));
 
-      // integrate with (possibly boosted) idle drift
       p.x += p.vx * driftEff;
       p.y += p.vy * driftEff;
 
-      // wrap horizontally; respawn at top when off the bottom
       if (p.x < -6) p.x = pCanvas.width + 6;
       if (p.x > pCanvas.width + 6) p.x = -6;
       if (p.y - p.size > pCanvas.height + 2) {
@@ -216,7 +245,17 @@
     if (animateStarted) return;
     animateStarted = true;
 
-    animateParticles(); // start draw loop
+    // Try to play whoosh now (may still be blocked until first gesture)
+    if (!particleSound) particleSound = createAudio();
+    if (!whooshPlayed) {
+      particleSound.currentTime = 0;
+      particleSound.play().then(() => { whooshPlayed = true; })
+      .catch(() => {
+        // Will auto-play on first gesture via primeAudioOnce()
+      });
+    }
+
+    animateParticles();
 
     const t0 = performance.now();
     let spawned = 0;
@@ -228,21 +267,18 @@
       const elapsed = performance.now() - t0;
       const t = Math.min(1, elapsed / PARTICLES.RAMP_MS);
 
-      // COUNT (quint)
       const shouldHave = Math.floor(PARTICLES.TARGET * easeInQuint(t));
       while (spawned < shouldHave) {
         particles.push(createParticle());
         spawned++;
       }
 
-      // OPACITY (cubic)
       const eAlpha = easeInCubic(t);
       const startAlpha = 0.01;
       particleAlpha = startAlpha + (PARTICLES.ALPHA_MAX - startAlpha) * eAlpha;
 
-      // MOTION + SIZE
-      driftMul = 0.6 + 0.6 * eAlpha;   // 0.6 -> 1.2
-      sizeMul  = 0.85 + 0.35 * eAlpha; // ~1.2x by end
+      driftMul = 0.6 + 0.6 * eAlpha;
+      sizeMul  = 0.85 + 0.35 * eAlpha;
 
       if (t < 1) requestAnimationFrame(tick);
     }
@@ -254,12 +290,16 @@
     lockScroll();
     resizeCanvas();
     typeWriter();
+
+    // Prime audio on first user gesture (click/touch/keydown)
+    window.addEventListener("pointerdown", primeAudioOnce, { once:false });
+    window.addEventListener("touchstart", primeAudioOnce, { once:false, passive:true });
+    window.addEventListener("keydown", primeAudioOnce, { once:false });
   }
 
   document.addEventListener("DOMContentLoaded", init);
   window.addEventListener("resize", resizeCanvas);
 
-  // pointer for subtle repulsion
   window.addEventListener("mousemove", e=>{
     mouseX = e.clientX;
     mouseY = e.clientY;
@@ -268,7 +308,6 @@
   // ===== SCROLL-DRIVEN bits =====
   gsap.registerPlugin(ScrollTrigger);
 
-  // Fade landing text while leaving #landing
   gsap.timeline({
     scrollTrigger:{
       trigger:"#landing",
@@ -281,39 +320,30 @@
   .to("#subText",   { opacity:0, y:-10, ease:"power2.out" }, 0)
   .to("#scrollHint",{ opacity:0,           ease:"power2.out" }, 0);
 
-  // Drive gravity by scroll progress + velocity.
-  // When scrolling stops, ease gravity back to 0 smoothly.
   ScrollTrigger.create({
     trigger:"#landing",
     start:"top top",
     end:"bottom top",
     scrub:true,
     onUpdate(self){
-      // cancel any ongoing falloff tween while actively scrolling
       if (falloffTween) { falloffTween.kill(); falloffTween = null; }
-
       const base = RAIN.GRAV_MAX * easeOutCubic(self.progress);
-      const v = self.getVelocity(); // +down, -up
+      const v = self.getVelocity();
       const vNorm = gsap.utils.clamp(-1, 1, v / RAIN.VEL_NORM);
       const boost = vNorm > 0 ? vNorm * RAIN.GRAV_MAX * RAIN.BOOST_GAIN : 0;
-
-      gravTarget = base + boost; // rainy while moving
+      gravTarget = base + boost;
     },
     onScrubComplete(self){
-      // smoothly glide back to no-gravity for seamless feel
       const cur = gravTarget;
       falloffTween = gsap.to({g: cur}, {
         duration: RAIN.FALL_DECAY_MS / 1000,
         g: 0,
         ease: "power2.out",
-        onUpdate(){
-          gravTarget = this.targets()[0].g;
-        }
+        onUpdate(){ gravTarget = this.targets()[0].g; }
       });
     }
   });
 
-  // Fade particle canvas across the #bridge section and stop RAF at end
   ScrollTrigger.create({
     trigger:"#bridge",
     start:"top bottom",
@@ -324,7 +354,7 @@
       gsap.to("#particleCanvas", { opacity: 1 - p, overwrite: "auto", duration: 0.1 });
     },
     onLeave(){
-      rafOn = false; // stop particle loop once bridge completes
+      rafOn = false;
       gsap.set("#particleCanvas", { opacity: 0 });
     },
     onLeaveBack(){
