@@ -1031,8 +1031,13 @@ s.textContent = `
     const el = document.createElement("style");
     el.id = "bgsky-style";
     el.textContent = `
-      #bg{ --sunX:50%; --sunY:20%; } /* defaults, updated during scroll */
-      #bg #bgSky{position:fixed;inset:0;pointer-events:none;z-index:1}
+#bg{
+  --sunX:50%; --sunY:20%;
+  --sunXpx:50%; --sunYpx:20%;
+  --sunBiasXpx:0px;  /* tweak left/right if needed */
+  --sunBiasYpx:8px;  /* nudge rays slightly down to match the drawn core */
+}#bg #bgSky{position:fixed;inset:0;pointer-events:none;z-index:1}
+
       #bgSky .sky{position:fixed;inset:0;transition:background 0.08s linear}
 
       .sunWrap{
@@ -1124,11 +1129,27 @@ s.textContent = `
     sunWrap.style.transform = `translate(-50%, ${yPct}%) scale(${scale})`;
 
     // expose CSS vars for other layers to lock to the sun center
-    const bg = document.getElementById("bg");
-    if (bg) {
-      bg.style.setProperty("--sunX", "50%");
-      bg.style.setProperty("--sunY", `${yPct + 16}%`); // adjust if your sun art needs a different center
-    }
+// expose CSS vars for other layers to lock to the sun center
+const bg = document.getElementById("bg");
+if (bg) {
+  // keep the % vars for anyone using them
+  bg.style.setProperty("--sunX", "50%");
+  bg.style.setProperty("--sunY", `${yPct + 16}%`);
+
+  // use the bright disc as the perceived center
+  const r = sunCore.getBoundingClientRect();
+  const cx = r.left + r.width  * 0.5;
+  const cy = r.top  + r.height * 0.5;
+
+  // small hand-tune without touching JS again
+  const cs = getComputedStyle(bg);
+  const bx = parseFloat(cs.getPropertyValue("--sunBiasXpx")) || 0;
+  const by = parseFloat(cs.getPropertyValue("--sunBiasYpx")) || 0;
+
+  bg.style.setProperty("--sunXpx", `${Math.round(cx + bx)}px`);
+  bg.style.setProperty("--sunYpx", `${Math.round(cy + by)}px`);
+}
+
 
     // visibility
     const sunVis =
@@ -1178,96 +1199,133 @@ s.textContent = `
   window.__sil__ = { build, update };
 })();
 
-/* ---------- GOD-RAYS (locked to sun) → SMOG ---------- */
+/* ---------- GOD-RAYS (locked to sun) → SMOG (realistic) ---------- */
 (function RaysToSmog() {
-  let built = false,
-    raysWrap,
-    rays,
-    raysPulse,
-    smog,
-    rot = 0,
-    lastProg = 0;
+  let built = false, wrap, rays, raysPulse, smog, lastProg = 0, rot = 0, raf;
 
-  function css() {
+  function css(){
     if (document.getElementById("bgrays-style")) return;
     const s = document.createElement("style");
     s.id = "bgrays-style";
     s.textContent = `
-      - #bg #bgRays{ position:fixed; inset:0; z-index:2; pointer-events:none; }
-+ #bg #bgRays{ position:fixed; inset:0; z-index:7; pointer-events:none; } /* topmost */
+  #bg #bgRays{ position:fixed; inset:0; pointer-events:none; z-index:7;
+    --rayOverscanX: 12vw;  /* must match the negative inset below */
+    --rayOverscanY: 12vh;
+  }
 
-- #bgRays .smog{
--   position:fixed; inset:-10% -10%;
-+ #bgRays .smog{
-+   position:fixed; inset:-25% -15%;    /* extend higher & lower */
-    mix-blend-mode: multiply;
-    opacity:0;
-    ...
--   filter: blur(0.6px) contrast(1.05);
-+   filter: blur(0.8px) contrast(1.10);
+  #bgRays .rays, #bgRays .raysPulse{
+    position:fixed; inset:-12% -12%; /* overscan so edges never show */
+    mix-blend-mode:screen; opacity:0;
+    will-change:transform, opacity, filter, background, -webkit-mask-image, mask-image;
+    filter: saturate(1.05) contrast(1.04) blur(0.8px);
+    transform-origin:
+      calc(var(--sunXpx, 50%) + var(--rayOverscanX))
+      calc(var(--sunYpx, 20%) + var(--rayOverscanY));
+  }
+  #bgRays .raysPulse{ filter: saturate(1.08) contrast(1.06) blur(1.1px); }
 
-    `;
+  #bgRays .rays, #bgRays .raysPulse{
+    -webkit-mask-image:
+      linear-gradient(to top, rgba(0,0,0,0) 0%, rgba(0,0,0,1) 18%, rgba(0,0,0,1) 100%),
+      radial-gradient(120vmax 120vmax at
+        calc(var(--sunXpx,50%) + var(--rayOverscanX))
+        calc(var(--sunYpx,20%) + var(--rayOverscanY)),
+        rgba(0,0,0,1) 0%, rgba(0,0,0,0) 70%);
+    -webkit-mask-composite: source-in;
+            mask-image:
+      linear-gradient(to top, rgba(0,0,0,0) 0%, rgba(0,0,0,1) 18%, rgba(0,0,0,1) 100%),
+      radial-gradient(120vmax 120vmax at
+        calc(var(--sunXpx,50%) + var(--rayOverscanX))
+        calc(var(--sunYpx,20%) + var(--rayOverscanY)),
+        rgba(0,0,0,1) 0%, rgba(0,0,0,0) 70%);
+    mask-composite: intersect;
+  }
+
+  #bgRays .smog{ /* unchanged */ ... }
+`;
+
     document.head.appendChild(s);
   }
 
-  function build() {
+ function rayBackground(){
+  const at = `calc(var(--sunXpx,50%) + var(--rayOverscanX)) calc(var(--sunYpx,20%) + var(--rayOverscanY))`;
+  return `
+    repeating-conic-gradient(from 0deg at ${at},
+      rgba(255,235,190,0.22) 0deg 4.5deg, rgba(255,235,190,0.00) 4.5deg 14deg),
+    repeating-conic-gradient(from 0.8deg at ${at},
+      rgba(255,220,160,0.10) 0deg 2.2deg, rgba(255,220,160,0.00) 2.2deg 8.5deg),
+    radial-gradient(85vmax 85vmax at ${at},
+      rgba(255,200,140,0.16) 0%, rgba(255,200,140,0.00) 60%)`;
+}
+function rayBackgroundPulse(){
+  const at = `calc(var(--sunXpx,50%) + var(--rayOverscanX)) calc(var(--sunYpx,20%) + var(--rayOverscanY))`;
+  return `
+    repeating-conic-gradient(from 0deg at ${at},
+      rgba(255,215,150,0.16) 0deg 2deg, rgba(255,215,150,0.00) 2deg 9deg),
+    radial-gradient(90vmax 90vmax at ${at},
+      rgba(255,190,120,0.18) 0%, rgba(255,190,120,0.00) 60%)`;
+}
+
+
+  function build(){
     if (built) return;
     const bg = document.getElementById("bg");
     if (!bg) return;
     css();
-    raysWrap = document.createElement("div");
-    raysWrap.id = "bgRays";
-    raysWrap.innerHTML = `
-      <div class="rays"></div>
-      <div class="raysPulse"></div>
-      <div class="smog"></div>`;
-    bg.appendChild(raysWrap);
-    rays = raysWrap.querySelector(".rays");
-    raysPulse = raysWrap.querySelector(".raysPulse");
-    smog = raysWrap.querySelector(".smog");
-    built = true;
+
+    wrap = document.createElement("div");
+    wrap.id = "bgRays";
+    wrap.innerHTML = `<div class="rays"></div><div class="raysPulse"></div><div class="smog"></div>`;
+    bg.appendChild(wrap);
+
+    rays      = wrap.querySelector(".rays");
+    raysPulse = wrap.querySelector(".raysPulse");
+    smog      = wrap.querySelector(".smog");
+
+    // set backgrounds once (they follow the CSS vars as they change)
+    rays.style.background      = rayBackground();
+    raysPulse.style.background = rayBackgroundPulse();
+
     tick();
+    built = true;
   }
 
-  function tick() {
-    // gentle rotation; slows near the end
+  function tick(){
+    // subtle rotation; slows toward the end so bands don’t swim too much
     const still = Math.max(0, 1 - Math.max(0, lastProg - 0.8) / 0.2);
-    rot += 0.06 * still;
-    // deg per frame-ish
+    rot += 0.04 * still;
     if (rays) {
-      rays.style.transform      = `rotate(${rot}deg) translateZ(0)`;
-      raysPulse.style.transform = `rotate(${rot*0.6}deg) translateZ(0)`;
+      const xShift = lastProg * 5, yShift = lastProg * 8; // gentle parallax drift
+      const base   = `translate(${xShift}px, ${yShift}px)`;
+      rays.style.transform      = `${base} rotate(${rot}deg)`;
+      raysPulse.style.transform = `${base} rotate(${rot*0.6}deg)`;
     }
-    rafId = requestAnimationFrame(tick);
+    raf = requestAnimationFrame(tick);
   }
 
-  // public update
   function update(p){
-    build(); if(!rays||!smog) return;
+    build(); if (!rays || !smog) return;
     lastProg = p;
-    const seg = p<1/3?0:p<2/3?1:2; const t = (p*3 - seg);
 
-    // visibility curves:
-    // rays: strong in seg 0, fade across seg 1, gone in seg 2
-    const raysIn  = seg===0 ? 1 : Math.max(0, 1 - t*1.4);
-    const pulseIn = seg===0 ? 1 : Math.max(0, 1 - t*1.2);
+    // segments: 0 warm, 1 fading, 2 gone → smog
+    const seg = p < 1/3 ? 0 : p < 2/3 ? 1 : 2;
+    const t   = (p*3 - seg); // 0..1 inside segment
 
-    // smog: minimal early, rises in seg 2
-    const smogIn  = seg<2 ? 0 : t;
+    // ---- ray visibility (monotonic fade: once gone, they never come back) ----
+// drop goes 0→1 across the *second third* of the scroll (Mid1), then stays at 1.
+const drop = clamp(0, (p - 1/3) / (1/3), 1); // uses your global clamp(min,v,max)
 
-    // strengths
-    const base = 0.34;  // main rays
-    const pulse= 0.28;  // glow layer
-    rays.style.opacity      = (base  * raysIn).toFixed(3);
-    raysPulse.style.opacity = (pulse * pulseIn).toFixed(3);
+// main sheet + pulse both fade to 0 by the end of Mid1
+const raysIn  = 1 - drop;        // 1 → 0, then stays 0 in Mid2
+const pulseIn = 0.9 * (1 - drop);
 
-    // small parallax drift with progress
-    const yShift = p*10, xShift = p*5;
-    rays.style.transform      = `translate(${xShift}px, ${yShift}px) rotate(${rot}deg)`;
-    raysPulse.style.transform = `translate(${xShift*0.6}px, ${yShift*0.6}px) rotate(${rot*0.6}deg)`;
+rays.style.opacity      = (0.32 * raysIn).toFixed(3);
+raysPulse.style.opacity = (0.26 * pulseIn).toFixed(3);
 
-  smog.style.opacity  = (0.16 + 0.34*smogIn).toFixed(3);         // more present
- smog.style.transform = `translateY(${(p*18).toFixed(2)}px)`;   // more vertical drift
+    // smog rises only in segment 2
+    const smogIn = seg < 2 ? 0 : t;
+    smog.style.opacity  = (0.14 + 0.36*smogIn).toFixed(3);
+    smog.style.transform = `translateY(${(p*18).toFixed(2)}px)`;
   }
 
   window.__rays__ = { build, update };
@@ -1532,6 +1590,7 @@ ScrollTrigger.create({
   },
   onRefresh: () => {
     cacheTreeRects(); sizeLeafCanvas();
+     if (window.__sky__)   { window.__sky__.build(); window.__sky__.update(window.__currentProgress || 0); }
     if (window.__sky__)   window.__sky__.build();
     if (window.__sil__)   window.__sil__.build();
     if (window.__rays__)  window.__rays__.build();
