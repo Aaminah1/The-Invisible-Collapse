@@ -1016,6 +1016,10 @@ s.textContent = `
   window.__fog__ = { build, update };
 })();
 
+
+
+
+
 /* ---------- BACKGROUND SKY (expose sun center via CSS vars) ---------- */
 (function BackgroundSky() {
   let built = false,
@@ -1573,6 +1577,8 @@ ScrollTrigger.create({
     if (window.__grade__) window.__grade__.update(self.progress);
     if (window.__dof__)   window.__dof__.update(self.progress);
     if (window.__pgrade__) window.__pgrade__.update(self.progress);
+    if (window.__rainbow__) window.__rainbow__.update(self.progress);
+
   },
   onLeaveBack(){
     setStageProgress(0);
@@ -1587,6 +1593,8 @@ ScrollTrigger.create({
     if (window.__grade__) window.__grade__.update(0);
     if (window.__dof__)   window.__dof__.update(0);
     if (window.__pgrade__) window.__pgrade__.update(0);
+    if (window.__rainbow__) window.__rainbow__.update(0);
+
   },
   onRefresh: () => {
     cacheTreeRects(); sizeLeafCanvas();
@@ -1598,6 +1606,8 @@ ScrollTrigger.create({
     if (window.__grade__) window.__grade__.build();
     if (window.__dof__)   window.__dof__.build();
     if (window.__pgrade__) { window.__pgrade__.build(); window.__pgrade__.update(0); }
+if (window.__rainbow__) window.__rainbow__.build();
+
 
     const bg = document.getElementById("bg");
     if (bg){
@@ -1631,6 +1641,9 @@ function init(){
 
   const bg = document.getElementById("bg");
   if (bg){
+    if (window.__rainbow__) window.__rainbow__.build();
+bringToFront(document.getElementById("bgRainbow"));
+
     bringToFront(document.getElementById("bgSky"));
     bringToFront(document.getElementById("bgSil"));
     bringToFront(document.getElementById("bgRays"));
