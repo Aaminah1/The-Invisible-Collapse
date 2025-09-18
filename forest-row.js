@@ -347,6 +347,62 @@ function spawnDustPuff(rect){
   });
 }
 
+function spawnDustFallAt(treeIdx, clientX, clientY, count = 36){
+  if (!leafCanvas || !TREE_RECTS.length) return;
+
+  const rect = TREE_RECTS[treeIdx] || TREE_RECTS[0];
+  const cb   = leafCanvas.getBoundingClientRect();
+
+  // Map click to canvas coords
+  let x = clientX - cb.left;
+  let y = clientY - cb.top;
+
+  // Clamp inside the canopy band for that tree
+  x = clamp(rect.x1, x, rect.x2);
+  y = clamp(rect.y1, y, rect.y2);
+
+  for (let k = 0; k < count; k++){
+    const r = Math.round(rand(120, 165));
+    const g = Math.round(rand(110, 140));
+    const b = Math.round(rand(95,  120));
+    const jitterX = rand(-8, 8);
+    const jitterY = rand(-6, 6);
+
+    dust.push({
+      x: x + jitterX,
+      y: y + jitterY,
+      r: rand(1, 3),
+      a: rand(0.35, 0.60),
+      vx: rand(-0.25, 0.25),
+      vy: rand(0.60, 1.60),
+      color: [r, g, b]
+    });
+  }
+}
+
+function spawnDustFall(treeIdx, count = 36){
+  if (!leafCanvas || !TREE_RECTS.length) return;
+  const rect = TREE_RECTS[treeIdx] || TREE_RECTS[0];
+
+  for (let k = 0; k < count; k++){
+    // earthy browns/greys with slight variation
+    const r = Math.round(rand(120, 165));
+    const g = Math.round(rand(110, 140));
+    const b = Math.round(rand(95,  120));
+
+    dust.push({
+      // start around the canopy (using your cached rect band)
+      x: rand(rect.x1, rect.x2),
+      y: rand(rect.y1, rect.y2),
+      r: rand(1, 3),
+      a: rand(0.35, 0.60),
+      vx: rand(-0.25, 0.25),
+      vy: rand(0.60, 1.60), // gentle fall
+      color: [r, g, b]
+    });
+  }
+}
+
 /* ---------- PICKUPS (apple/flower/twig) ---------- */
 const PICKUP_SRC = {
   apple:  "images/apple.png",
@@ -496,7 +552,22 @@ function attachTreeClicks(){
       ev.stopPropagation();
       const p   = window.__currentProgress || 0;
       const seg = segFromProgress(p); // 0 full, 1 mid1, 2 mid2
-      if (p > 0.985){ shakeTree(w); return; } // bare: nothing drops
+
+    if (p > 0.985){
+  shakeTree(w);
+
+  // Dust burst from where the user clicked
+  spawnDustFallAt(i, ev.clientX, ev.clientY, 42);
+
+  // Extra subtle ground puffs
+  const r = TREE_RECTS[i] || TREE_RECTS[0];
+  for (let k = 0; k < 3; k++){
+    setTimeout(() => spawnDustPuff(r), k * 90);
+  }
+  return;
+}
+
+
       shakeTree(w);
       const kind = itemForSeg(seg);
       spawnPickup(kind, i, ev.clientX);
@@ -746,8 +817,11 @@ if (p.kind === "apple" && onGround) {
   dust.forEach(d=>{
     d.x += d.vx; d.y += d.vy; d.a -= 0.003;
     lctx.beginPath(); lctx.arc(d.x,d.y,d.r,0,Math.PI*2);
-    lctx.fillStyle = `rgba(140,140,140,${d.a})`;
-    lctx.fill();
+const col = d.color ? `rgba(${d.color[0]},${d.color[1]},${d.color[2]},${d.a})`
+                    : `rgba(140,140,140,${d.a})`;
+lctx.fillStyle = col;
+lctx.fill();
+
   });
 
   requestAnimationFrame(leafLoop);
@@ -802,23 +876,24 @@ function updateLeavesForProgress(p){
     if (document.getElementById("bgfog-style")) return;
     const s = document.createElement("style");
     s.id = "bgfog-style";
-    s.textContent = `
-      #bg #bgFog{ position:fixed; inset:0; pointer-events:none; z-index:2; }
-      /* Each layer is a full-viewport div with repeat-x background so it never "runs out" */
-      #bgFog .layer{
-        position:fixed; inset:0;
-        background-repeat: repeat-x;
-        background-position: 0 0;
-        background-size: auto 90%;
-        will-change: background-position, opacity, transform, filter;
-        filter: blur(1px);
-        opacity: 0;
-      }
-      /* slight different scales so parallax looks deeper */
-      #bgFog .l1{ background-size: auto 92%; }
-      #bgFog .l2{ background-size: auto 100%; }
-      #bgFog .l3{ background-size: auto 96%; }
-    `;
+s.textContent = `
+  #bg #bgFog{ position:fixed; inset:0; pointer-events:none; z-index:6; } /* was 2 */
+  /* Each layer is a full-viewport div with repeat-x background so it never "runs out" */
+  #bgFog .layer{
+    position:fixed; inset:0;
+    background-repeat: repeat-x;
+    background-position: 0 0;
+    background-size: auto 130%;                /* was 90%: taller coverage */
+    will-change: background-position, opacity, transform, filter;
+    filter: blur(1px);
+    opacity: 0;
+  }
+  /* slight different scales so parallax looks deeper */
+  #bgFog .l1{ background-size: auto 135%; }    /* was 92%  */
+  #bgFog .l2{ background-size: auto 140%; }    /* was 100% */
+  #bgFog .l3{ background-size: auto 130%; }    /* was 96%  */
+`;
+
     document.head.appendChild(s);
   }
 
@@ -874,50 +949,68 @@ function updateLeavesForProgress(p){
   }
 
   function update(p){
-  build();
-  if (!L1 || !L2 || !L3) return;
+  build(); if (!L1 || !L2 || !L3) return;
+
   const clamp01 = v => Math.max(0, Math.min(1, v));
   const smooth  = v => v*v*(3-2*v);
 
   const prog = clamp01(p);
   const seg  = prog < 1/3 ? 0 : prog < 2/3 ? 1 : 2;
   const tSeg = seg === 0 ? prog/(1/3)
-              : seg === 1 ? (prog-1/3)/(1/3)
-              : (prog-2/3)/(1/3);
+            : seg === 1 ? (prog-1/3)/(1/3)
+            : (prog-2/3)/(1/3);
   const t = smooth(clamp01(tSeg));
 
+  // Clear defaults
   let o1=0, o2=0, o3=0;
 
-  if (seg === 1){
-    /* Mid2 build-up: present but not choking */
-    o1 = 0.18 + 0.12 * t;   // ~0.18 → 0.30
-    o2 = 0.24 + 0.18 * t;   // ~0.24 → 0.42
-    o3 = 0.14 + 0.10 * t;   // ~0.14 → 0.24
+  // ---- We’ll treat L2 as the "near-weighted" fog sheet ----
+  // base “near” emphasis increases as the world gets worse
+  // (low in seg1, stronger in seg2)
+  const nearBiasSeg1 = 0.25;            // subtle bias in Mid1→Mid2
+  const nearBiasSeg2 = 0.55;            // strong bias in Bare
 
-    const filt = `saturate(${(1 - 0.08*t).toFixed(3)}) brightness(${(1 - 0.04*t).toFixed(3)})`;
-    L1.style.filter = `blur(1.2px) ${filt}`;
-    L2.style.filter = `blur(1.0px) ${filt}`;
-    L3.style.filter = `blur(1.4px) ${filt}`;
+  if (seg === 1){
+    // Start a *little* fog immediately in seg1 and grow it softly
+    // Tiny overall density, slightly biased to L2 so it already feels "near"
+    const base = 0.05 + 0.10 * t;       // ~0.05 → 0.15
+    const bias = nearBiasSeg1 * t;      // 0 → nearBiasSeg1
+
+    // distribute with a near bias: L2 gets the biggest share
+    o1 = base * (0.70 - bias*0.4);      // farthest
+    o2 = base * (1.20 + bias*0.8);      // near-emphasis
+    o3 = base * (0.85 - bias*0.2);      // mid
+
+    // keep fog soft and light in seg1
+    const filt = `saturate(${(1 - 0.05*t).toFixed(3)}) brightness(${(1 - 0.03*t).toFixed(3)})`;
+    L1.style.filter = `blur(1.4px) ${filt}`;
+    L2.style.filter = `blur(1.2px) ${filt}`;
+    L3.style.filter = `blur(1.6px) ${filt}`;
   }
   else if (seg === 2){
-    /* Bare: clearly worse — denser + dirtier look */
-    const k = 0.35 + 0.65 * t; // overall density ramp in Bare
-    o1 = 0.30 + 0.28 * k;      // tops ~0.49
-    o2 = 0.38 + 0.34 * k;      // tops ~0.60–0.70
-    o3 = 0.22 + 0.26 * k;      // tops ~0.39–0.48
+    // Bare: overall density rises and near layer dominates more
+    const dens = 0.22 + 0.56 * t;       // total “strength” ramp
+    const bias = nearBiasSeg2 * (0.4 + 0.6*t); // push more to L2 as we progress
 
-    // “grime” filter: less blur, more contrast, darker & slightly desaturated
-    const grime = `grayscale(${(0.15 + 0.35*t).toFixed(3)}) contrast(${(1.05 + 0.25*t).toFixed(3)}) brightness(${(0.96 - 0.18*t).toFixed(3)}) saturate(${(1 - 0.20*t).toFixed(3)})`;
-    L1.style.filter = `blur(${(1.2 - 0.4*t).toFixed(2)}px) ${grime}`;
-    L2.style.filter = `blur(${(1.0 - 0.35*t).toFixed(2)}px) ${grime}`;
-    L3.style.filter = `blur(${(1.4 - 0.50*t).toFixed(2)}px) ${grime}`;
+    // heavier distribution with near emphasis
+    o1 = dens * (0.70 - bias*0.35);     // far
+    o2 = dens * (1.35 + bias*0.95);     // near (strongest)
+    o3 = dens * (0.95 - bias*0.20);     // mid
+
+    // grimy/denser look as we approach bare
+    const grime = `grayscale(${(0.20 + 0.45*t).toFixed(3)}) contrast(${(1.06 + 0.28*t).toFixed(3)}) brightness(${(0.94 - 0.22*t).toFixed(3)}) saturate(${(1 - 0.22*t).toFixed(3)})`;
+    L1.style.filter = `blur(${(1.0 - 0.25*t).toFixed(2)}px) ${grime}`;
+    L2.style.filter = `blur(${(0.9 - 0.22*t).toFixed(2)}px) ${grime}`;
+    L3.style.filter = `blur(${(1.2 - 0.36*t).toFixed(2)}px) ${grime}`;
   }
 
-  // Apply the opacities (seg 0 stays 0)
-  L1.style.opacity = o1.toFixed(3);
-  L2.style.opacity = o2.toFixed(3);
-  L3.style.opacity = o3.toFixed(3);
+  // Clamp & apply
+  const c = v => Math.max(0, Math.min(0.95, v));
+  L1.style.opacity = c(o1).toFixed(3);
+  L2.style.opacity = c(o2).toFixed(3);
+  L3.style.opacity = c(o3).toFixed(3);
 }
+
 
 
   window.__fog__ = { build, update };
@@ -1100,58 +1193,19 @@ function updateLeavesForProgress(p){
     const s = document.createElement("style");
     s.id = "bgrays-style";
     s.textContent = `
-      #bg #bgRays{ position:fixed; inset:0; z-index:2; pointer-events:none; }
+      - #bg #bgRays{ position:fixed; inset:0; z-index:2; pointer-events:none; }
++ #bg #bgRays{ position:fixed; inset:0; z-index:7; pointer-events:none; } /* topmost */
 
-      /* main rays: conic fan centered at the sun */
-      #bgRays .rays{
-        position:fixed; inset:-10% -20% -10% -20%;
-        mix-blend-mode: screen;
-        opacity:0;
-        background:
-          repeating-conic-gradient(
-            from 110deg at var(--sunX) var(--sunY),
-            rgba(255,245,210,0.14) 0deg,
-            rgba(255,245,210,0.14) 4deg,
-            rgba(255,245,210,0.00) 12deg,
-            rgba(255,245,210,0.00) 22deg
-          );
-        filter: blur(1.2px) saturate(1.05);
-        transform-origin: var(--sunX) var(--sunY);
-        will-change: transform, opacity, background;
-      }
+- #bgRays .smog{
+-   position:fixed; inset:-10% -10%;
++ #bgRays .smog{
++   position:fixed; inset:-25% -15%;    /* extend higher & lower */
+    mix-blend-mode: multiply;
+    opacity:0;
+    ...
+-   filter: blur(0.6px) contrast(1.05);
++   filter: blur(0.8px) contrast(1.10);
 
-      /* soft pulse glow also anchored to the sun */
-      #bgRays .raysPulse{
-        position:fixed; inset:-10% -20% -10% -20%;
-        mix-blend-mode: screen;
-        opacity:0;
-        background:
-          radial-gradient(70% 50% at var(--sunX) calc(var(--sunY) - 12%),
-            rgba(255,240,200,0.22),
-            rgba(255,220,150,0.10) 40%,
-            rgba(255,210,130,0.00) 68%);
-        filter: blur(6px);
-        transform-origin: var(--sunX) var(--sunY);
-        will-change: transform, opacity, background;
-      }
-
-      #bgRays .smog{
-        position:fixed; inset:-10% -10%;
-        mix-blend-mode: multiply;
-        opacity:0;
-        background:
-          repeating-linear-gradient( 92deg,
-            rgba(36,40,48,0.00) 0px,
-            rgba(36,40,48,0.00) 10px,
-            rgba(36,40,48,0.12) 18px,
-            rgba(36,40,48,0.12) 22px),
-          repeating-linear-gradient( 86deg,
-            rgba(40,44,54,0.00) 0px,
-            rgba(40,44,54,0.00) 16px,
-            rgba(40,44,54,0.08) 23px,
-            rgba(40,44,54,0.08) 26px);
-        filter: blur(0.6px) contrast(1.05);
-      }
     `;
     document.head.appendChild(s);
   }
@@ -1212,8 +1266,8 @@ function updateLeavesForProgress(p){
     rays.style.transform      = `translate(${xShift}px, ${yShift}px) rotate(${rot}deg)`;
     raysPulse.style.transform = `translate(${xShift*0.6}px, ${yShift*0.6}px) rotate(${rot*0.6}deg)`;
 
-    smog.style.opacity  = (0.10 + 0.22*smogIn).toFixed(3);
-    smog.style.transform = `translateY(${p*10}px)`;
+  smog.style.opacity  = (0.16 + 0.34*smogIn).toFixed(3);         // more present
+ smog.style.transform = `translateY(${(p*18).toFixed(2)}px)`;   // more vertical drift
   }
 
   window.__rays__ = { build, update };
@@ -1337,9 +1391,23 @@ function updateLeavesForProgress(p){
 
     const f = (k)=>`hue-rotate(${hueWarm}deg) saturate(${(sat*k).toFixed(3)}) brightness(${(brightF/k).toFixed(3)}) contrast(${cont.toFixed(3)}) blur(${(2.5*coldBoost/k).toFixed(2)}px)`;
 
-    if (far)  far.style.filter  = f(1.25);
-    if (mid)  mid.style.filter  = f(1.0);
-    if (near) near.style.filter = f(0.85);
+  if (far)  far.style.filter  = f(1.25);
+if (mid)  mid.style.filter  = f(1.0);
+
+if (near){
+  if (seg === 2){
+    // extra grimness on near layer in Bare
+    const darker = `grayscale(${(0.25 + 0.35*t).toFixed(3)}) brightness(${(0.78 - 0.10*t).toFixed(3)}) contrast(${(1.10 + 0.12*t).toFixed(3)})`;
+    near.style.filter = `${f(0.85)} ${darker}`;
+    // Optional extra depth (fade a bit under the haze):
+    // near.style.opacity = (1.0 - 0.18 - 0.22*t).toFixed(3);
+  } else {
+    near.style.filter = f(0.85);
+    // near.style.opacity = "1";
+  }
+}
+
+
   }
   window.__pgrade__ = { build, update };
 })();
@@ -1474,11 +1542,12 @@ ScrollTrigger.create({
 
     const bg = document.getElementById("bg");
     if (bg){
-      bringToFront(document.getElementById("bgSky"));
-      bringToFront(document.getElementById("bgSil"));
-      bringToFront(document.getElementById("bgRays"));
-      bringToFront(document.getElementById("bgGrade"));
-      bringToFront(document.getElementById("bgFog"));
+     bringToFront(document.getElementById("bgSky"));   // z:1
+bringToFront(document.getElementById("bgSil"));   // z:1 (near silhouettes)
+bringToFront(document.getElementById("bgGrade")); // z:2 (tint/vignette)
+bringToFront(document.getElementById("bgFog"));   // z:6 (fog layers)
+bringToFront(document.getElementById("bgRays"));  // z:7 (smog = top)
+
     }
   }
 });
