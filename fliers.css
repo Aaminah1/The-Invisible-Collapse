@@ -1,0 +1,3 @@
+#leafCanvas{ position:absolute; inset:0; z-index:31; }   /* leaves & pickups on top */
+#crittersCanvas{ position:absolute; inset:0; z-index:30; }/* subtle fliers below */
+#forestReveal{ position:relative; z-index:1; }            /* trees below both */

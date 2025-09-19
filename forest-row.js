@@ -171,6 +171,8 @@ function setupReveal(){
     stagger: 0.14
   })
   .add(startBreathing);
+
+  gsap.set(".tree-back, .tree", { opacity: 0, clipPath: "inset(100% 0 0 0)" });
 }
 
 /* ---------- crossfade stages while pinned ---------- */
@@ -569,6 +571,9 @@ function attachTreeClicks(){
 
 
       shakeTree(w);
+      // tell fliers which canopy was disturbed
+window.dispatchEvent(new CustomEvent("tree-shake", { detail: { idx: i, rect: TREE_RECTS[i] } }));
+
       const kind = itemForSeg(seg);
       spawnPickup(kind, i, ev.clientX);
     }, {passive:true});
@@ -1578,6 +1583,7 @@ ScrollTrigger.create({
     if (window.__dof__)   window.__dof__.update(self.progress);
     if (window.__pgrade__) window.__pgrade__.update(self.progress);
     if (window.__rainbow__) window.__rainbow__.update(self.progress);
+    if (window.__fliers__) window.__fliers__.update(self.progress);
 
   },
   onLeaveBack(){
@@ -1594,6 +1600,7 @@ ScrollTrigger.create({
     if (window.__dof__)   window.__dof__.update(0);
     if (window.__pgrade__) window.__pgrade__.update(0);
     if (window.__rainbow__) window.__rainbow__.update(0);
+    if (window.__fliers__) window.__fliers__.update(0);
 
   },
   onRefresh: () => {
@@ -1607,7 +1614,7 @@ ScrollTrigger.create({
     if (window.__dof__)   window.__dof__.build();
     if (window.__pgrade__) { window.__pgrade__.build(); window.__pgrade__.update(0); }
 if (window.__rainbow__) window.__rainbow__.build();
-
+if (window.__fliers__) window.__fliers__.build();
 
     const bg = document.getElementById("bg");
     if (bg){
