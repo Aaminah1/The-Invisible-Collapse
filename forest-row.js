@@ -582,6 +582,18 @@ window.dispatchEvent(new CustomEvent("tree-shake", { detail: { idx: i, rect: TRE
 
 const G = 0.25, FRICTION = 0.88, ROT_F = 0.97, BOUNCE = 0.3;
 const WIND = { x: 0 };    // shared gust
+window.__WIND__ = WIND; // expose to mic controller
+
+window.__treesMicSway__ = (amt) => {
+  gsap.to("#forestReveal .tree-wrap", {
+   rotation: amt * 2.5,
+    duration: 0.12,
+    ease: "sine.inOut",
+    overwrite: "auto",
+    transformOrigin: "50% 100%" // bottom center
+  });
+};
+
 
 function leafLoop(){
   if (!leafCanvas || !lctx){ return; }

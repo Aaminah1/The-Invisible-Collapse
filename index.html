@@ -21,7 +21,13 @@
    <link rel="stylesheet" href="fliers.css" />
 </head>
 <body>
-
+<button id="micWindBtn" style="
+  position:fixed; right:16px; bottom:16px; z-index:9999;
+  padding:10px 14px; border:0; border-radius:10px; cursor:pointer;
+  background:#0a0a0d; color:#e6e6f0; font:600 14px/1 system-ui;
+  box-shadow: 0 6px 20px rgba(0,0,0,.25); opacity:.9">
+  🌬️ Enable Mic Wind
+</button>
   <!-- FIXED BACKGROUND ORCHESTRATOR (always covers viewport) -->
   <div id="bg">
     <!-- gradient sky that fades in first -->
@@ -62,6 +68,7 @@
 <script src="fliers.js"></script>
 <script src="bg-rainbow.js"></script>
 <script src="forest-row.js"></script>
+<script src="mic-wind.js"></script>
   <script src="scene1.js"></script>
   <script src="bg.js"></script>
 </body>
