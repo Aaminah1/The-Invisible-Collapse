@@ -9,6 +9,39 @@ const SRC = {
   bare: "images/Tree-Bare.png"
 };
 
+/* ---------- custom apple decay sequence (must be above spawnPickup) ---------- */
+const APPLE_SEQ = [
+  "images/apple1.png", // fresh (airborne)
+  "images/apple2.png", // stage 2
+  "images/apple3.png", // stage 3
+  "images/apple4.png"  // stage 4 (rotten)
+];
+const APPLE_IMGS = APPLE_SEQ.map(src => { const i = new Image(); i.src = src; return i; });
+
+/* Faster timings so users don’t have to wait long */
+const APPLE_STAGE_TIMES = [0, 2, 5, 9];   // seconds after first ground contact
+const APPLE_FADE_START  = 6;                // seconds after first ground contact
+const APPLE_FADE_DUR    = 4;                // fade out over this long
+
+/* ---------- flower decay sequence ---------- */
+const FLOWER_SEQ = [
+  "images/flower1.png", // fresh (airborne)
+  "images/flower2.png", // bruised
+  "images/flower3.png", // wilted
+  "images/flower4.png"  // crumbling
+];
+const FLOWER_IMGS = FLOWER_SEQ.map(src => { const i = new Image(); i.src = src; return i; });
+
+/* Tuned for a slower, more “organic” wilt than apples */
+const FLOWER_STAGE_TIMES = [0, 3.5, 8, 14]; // seconds after first ground contact
+const FLOWER_FADE_START  = 11;              // when fade begins
+const FLOWER_FADE_DUR    = 5;               // how long it takes to disappear
+
+/* crossfade length shared by both */
+const PICKUP_XFADE = 1.25; // sec of photometric blend per boundary
+
+
+
 /* ---------- helpers ---------- */
 const clamp = (min, v, max) => Math.max(min, Math.min(max, v));
 const clampSpin = (v, max) => Math.max(-max, Math.min(max, v)); // unified
@@ -459,7 +492,15 @@ function spawnPickup(kind, treeIdx, clickClientX){
   const x = rect.x1 + frac*span + (span*0.08)*(Math.random()-0.5);
   const y = rect.y1 + (rect.y2 - rect.y1)*(0.05 + Math.random()*0.10);
 
-  const img = new Image(); img.src = PICKUP_SRC[kind];
+const img = new Image();
+if (kind === "apple") {
+  img.src = APPLE_SEQ[0];
+} else if (kind === "flower") {
+  img.src = FLOWER_SEQ[0];
+} else {
+  img.src = PICKUP_SRC[kind];
+}
+
 
   const cfg = PICKUP_PRESET[kind];
   let w = cfg.baseSize[0], h = cfg.baseSize[1];
@@ -487,7 +528,12 @@ function spawnPickup(kind, treeIdx, clickClientX){
     bruised: 0, snapped:false,
     dragging:false, dead:false,
     grabDX:0, grabDY:0,
-    ph
+    ph,
+   // sequence/decay bookkeeping
+  stageIdx: (kind === "apple" || kind === "flower") ? 0 : undefined,
+  landedAt: (kind === "apple" || kind === "flower") ? null : undefined,
+
+    alphaOverride: undefined
   });
 }
 
@@ -594,38 +640,63 @@ window.__treesMicSway__ = (amt) => {
   });
 };
 
+// smooth crossfade between apple frames
+const APPLE_XFADE = 1.5; // seconds to blend frames
+const smooth01 = t => t*t*(3 - 2*t); // smoothstep
+
+// returns which two frames to blend and the blend factor 0..1
+function frameStageBlend(tSec, STAGE_TIMES, XFADE = PICKUP_XFADE){
+  let a = 0;
+  while (a < STAGE_TIMES.length - 1 && tSec >= STAGE_TIMES[a + 1]) a++;
+  const b = Math.min(STAGE_TIMES.length - 1, a + 1);
+  const xfadeStart = Math.max(0, STAGE_TIMES[b] - XFADE);
+  const k = tSec >= xfadeStart
+    ? smooth01( clamp(0, (tSec - xfadeStart) / XFADE, 1) )
+    : 0;
+  return { a, b, k };
+}
+
 
 function leafLoop(){
-  if (!leafCanvas || !lctx){ return; }
-  lctx.clearRect(0,0,leafCanvas.width, leafCanvas.height);
+  if (!leafCanvas || !lctx) return;
 
-  // ---------------- settled leaves ----------------
-  settled.forEach(p=>{
-    const half = p.size/2, ground = leafCanvas.height - half - GROUND_RISE_PX;
+  const now = performance.now(); // single timestamp per frame
+  lctx.clearRect(0, 0, leafCanvas.width, leafCanvas.height);
 
-    if (mouse.x>=0){
-      const dx = p.x - mouse.x, dy = p.y - mouse.y, d = Math.hypot(dx,dy);
-      if (d < 70){
-        const f = (70 - d)/70 * 3.0;
-        p.vx += (dx/d) * f;
-        p.vy += (dy/d) * f - 0.6;
-        p.rVel += (Math.random()-0.5) * 0.22;
+  /* ---------------- settled leaves ---------------- */
+  settled.forEach(p => {
+    const half   = p.size / 2;
+    const ground = leafCanvas.height - half - GROUND_RISE_PX;
+
+    // cursor push to wake a settled leaf
+    if (mouse.x >= 0) {
+      const dx = p.x - mouse.x, dy = p.y - mouse.y, d = Math.hypot(dx, dy);
+      if (d < 70) {
+        const f = (70 - d) / 70 * 3.0;
+        p.vx += (dx / d) * f;
+        p.vy += (dy / d) * f - 0.6;
+        p.rVel += (Math.random() - 0.5) * 0.22;
         p.air = true;
       }
     }
 
-    if (p.air){
-      p.vy += G*0.6; p.vy *= p.dragY; if (p.vy>p.termVy) p.vy = p.termVy;
-      const wob = Math.sin(p.t*p.wob1)*p.amp1 + Math.sin(p.t*p.wob2)*p.amp2;
-      p.x += p.vx + wob*0.02 + WIND.x;
-      p.y += p.vy;
-      p.rVel *= ROT_F; p.rot += p.rVel; p.t++;
+    if (p.air) {
+      p.vy += G * 0.6;
+      p.vy *= p.dragY;
+      if (p.vy > p.termVy) p.vy = p.termVy;
 
-      if (p.y > ground){
+      const wob = Math.sin(p.t * p.wob1) * p.amp1 + Math.sin(p.t * p.wob2) * p.amp2;
+      p.x += p.vx + wob * 0.02 + WIND.x;
+      p.y += p.vy;
+      p.rVel *= ROT_F;
+      p.rot += p.rVel;
+      p.t++;
+
+      if (p.y > ground) {
         p.y = ground;
-        if (Math.abs(p.vy)>0.4){
+        if (Math.abs(p.vy) > 0.4) {
           p.vy *= -0.35; p.vx *= 0.7;
-          p.rVel += (Math.random()-0.5)*0.12;
+          p.rVel += (Math.random() - 0.5) * 0.12;
         } else {
           p.vy = 0; p.air = false;
           if (Math.abs(p.rVel) < 0.01) p.rVel = 0;
@@ -636,93 +707,94 @@ function leafLoop(){
       p.y = ground;
     }
 
-    if (p.x < half){ p.x = half; p.vx *= -BOUNCE; }
-    if (p.x > leafCanvas.width-half){ p.x = leafCanvas.width-half; p.vx *= -BOUNCE; }
+    if (p.x < half) { p.x = half; p.vx *= -BOUNCE; }
+    if (p.x > leafCanvas.width - half) { p.x = leafCanvas.width - half; p.vx *= -BOUNCE; }
 
-    lctx.save(); lctx.translate(p.x,p.y); lctx.rotate(p.rot);
+    // draw
+    lctx.save();
+    lctx.translate(p.x, p.y);
+    lctx.rotate(p.rot);
     lctx.drawImage(p.img, -half, -half, p.size, p.size);
     lctx.restore();
   });
 
-  // ---------------- falling leaves ----------------
+  /* ---------------- falling leaves ---------------- */
   const still = [];
-  falling.forEach(p=>{
+  falling.forEach(p => {
     p.t++;
-    p.vy += G*0.6; p.vy *= p.dragY; if (p.vy>p.termVy) p.vy = p.termVy;
-    const wob = Math.sin(p.t*p.wob1)*p.amp1 + Math.sin(p.t*p.wob2)*p.amp2;
+    p.vy += G * 0.6;
+    p.vy *= p.dragY;
+    if (p.vy > p.termVy) p.vy = p.termVy;
+
+    const wob = Math.sin(p.t * p.wob1) * p.amp1 + Math.sin(p.t * p.wob2) * p.amp2;
     p.y += p.baseDrop + p.vy;
     p.x += wob * 0.02 + WIND.x;
     p.rot += p.rVel;
 
-    const half = p.size/2, ground = leafCanvas.height - half - GROUND_RISE_PX;
+    const half   = p.size / 2;
+    const ground = leafCanvas.height - half - GROUND_RISE_PX;
 
-    if (p.y < ground){
+    if (p.y < ground) {
       still.push(p);
-      lctx.save(); lctx.translate(p.x,p.y); lctx.rotate(p.rot);
-      lctx.drawImage(p.img, -p.size/2, -p.size/2, p.size, p.size);
+      lctx.save();
+      lctx.translate(p.x, p.y);
+      lctx.rotate(p.rot);
+      lctx.drawImage(p.img, -p.size / 2, -p.size / 2, p.size, p.size);
       lctx.restore();
     } else {
       p.y = ground;
-      p.vx = (Math.random()-0.5)*1.4;
-      p.vy = -Math.random()*2;
-      p.rVel = (Math.random()-0.5)*0.3;
+      p.vx = (Math.random() - 0.5) * 1.4;
+      p.vy = -Math.random() * 2;
+      p.rVel = (Math.random() - 0.5) * 0.3;
       p.air = true;
       settled.push(p);
     }
   });
   falling = still;
 
-  // ---------------- pickups (update + draw) ----------------
-  const now = performance.now();
-  pickups = pickups.filter(p=>!p.dead);
+  /* ---------------- pickups (apple/flower/twig) ---------------- */
+  pickups = pickups.filter(p => !p.dead);
 
-  pickups.forEach(p=>{
-    const ground = leafCanvas.height - (p.h/2) - GROUND_RISE_PX;
-    const ageSec = (now - p.born)/1000;
+  pickups.forEach(p => {
+    const ground = leafCanvas.height - (p.h / 2) - GROUND_RISE_PX;
+    const ageSec = (now - p.born) / 1000;
 
-    if (p.dragging){
-      // spring to cursor (respect grab offset so it feels “held”), weighted
-      const k   = p.ph?.grabK   ?? 0.14;
+    // dragging spring or cursor push
+    if (p.dragging) {
+      const k = p.ph?.grabK ?? 0.14;
       const dmp = p.ph?.grabDmp ?? 0.85;
-      const tx = mouse.x + (p.grabDX||0);
-      const ty = mouse.y + (p.grabDY||0);
+      const tx = mouse.x + (p.grabDX || 0);
+      const ty = mouse.y + (p.grabDY || 0);
       p.vx += (tx - p.x) * k;
       p.vy += (ty - p.y) * k;
       p.vx *= dmp; p.vy *= dmp;
-    }else{
-      // cursor push (like leaves) when nearby; per-kind radius/force
-      if (mouse.x >= 0){
-        const dx = p.x - mouse.x, dy = p.y - mouse.y;
-        const d  = Math.hypot(dx,dy);
-        const R  = p.ph?.cursorR ?? 100;
-        if (d < R && d > 0.001){
-          const f = (R - d)/R * (p.ph?.cursorF ?? 1.2);
-          p.vx += (dx/d) * f;
-          p.vy += (dy/d) * f - 0.10;   // a touch of lift
-          p.rVel += (Math.random()-0.5) * 0.02;
-          p.air = true;
+    } else {
+      if (mouse.x >= 0) {
+        const dx = p.x - mouse.x, dy = p.y - mouse.y, d = Math.hypot(dx, dy);
+        const R = p.ph?.cursorR ?? 100;
+        if (d < R && d > 0.001) {
+          const f = (R - d) / R * (p.ph?.cursorF ?? 1.2);
+          p.vx += (dx / d) * f;
+          p.vy += (dy / d) * f - 0.10;
+          p.rVel += (Math.random() - 0.5) * 0.02;
         }
       }
-      // gravity & breeze (weighted)
-      p.vy += G*0.7; p.vy *= p.dragY; if (p.vy > p.termVy) p.vy = p.termVy;
+      p.vy += G * 0.7;
+      p.vy *= p.dragY;
+      if (p.vy > p.termVy) p.vy = p.termVy;
       p.vx += WIND.x * (p.ph?.wind ?? 0.25) * 0.15;
     }
 
-    // ---- angular behavior (per-kind damping) ----
-    // ---- angular behavior ----
-if (p.kind === "apple") {
-  // No in-air spin: apples only roll once they’re on the ground
-  if (p.y < ground - 0.5) {
-    // bleed any residual spin away while airborne
-    p.rVel *= p.ph?.rotDampAir ?? 0.96;
-  } else {
-    // on ground: mild damping (the rolling feel comes from coupling below)
-    p.rVel *= p.ph?.rotDampGround ?? 0.90;
-  }
-} else {
-  // flowers/twigs: keep gentle air damping
-  p.rVel *= p.ph?.rotDampAir ?? 0.985;
-}
+    // angular damping per kind
+    if (p.kind === "apple") {
+      if (p.y < ground - 0.5) {
+        p.rVel *= p.ph?.rotDampAir ?? 0.96;
+      } else {
+        p.rVel *= p.ph?.rotDampGround ?? 0.90;
+      }
+    } else {
+      p.rVel *= p.ph?.rotDampAir ?? 0.985;
+    }
 
     // integrate
     p.x += p.vx; p.y += p.vy;
@@ -730,35 +802,36 @@ if (p.kind === "apple") {
     p.rot += p.rVel / rotInertia;
 
     // ground collision
-    if (p.y > ground){
-      if (Math.abs(p.vy) > 1.6){
-        dust.push({ x: p.x, y: leafCanvas.height - rand(8,18), r: rand(2,5), a: rand(0.25,0.4), vx: rand(-0.6,0.6), vy: rand(1.4,2.6) });
-        if (p.kind === "twig" && !p.snapped && ageSec > 12 && Math.random() < 0.08){
-          // snap twig into two fragments
+    if (p.y > ground) {
+      // first ground touch for apples → start decay clock
+if ((p.kind === "apple" || p.kind === "flower") && p.landedAt == null) p.landedAt = now;
+
+      if (Math.abs(p.vy) > 1.6) {
+        dust.push({
+          x: p.x, y: leafCanvas.height - ((Math.random() * 10) + 8),
+          r: (Math.random() * 3) + 2, a: 0.25 + Math.random() * 0.15,
+          vx: (Math.random() - 0.5) * 1.2, vy: 1.4 + Math.random() * 1.2
+        });
+
+        // twig snap
+        if (p.kind === "twig" && !p.snapped && ageSec > 12 && Math.random() < 0.08) {
           p.snapped = true;
-          const mk = (w, vx)=>({
-            id:Math.random().toString(36).slice(2), kind:"twig", img:p.img,
-            x:p.x+(Math.random()-0.5)*10, y:ground-1, w, h:Math.max(18, p.h*0.9),
-            vx:vx, vy:-1.2, rot:p.rot+(Math.random()-0.5)*0.2, rVel:(Math.random()-0.5)*0.06,
-            termVy:p.termVy, dragY:p.dragY, born:now, snapped:true, dragging:false, dead:false, ph:p.ph
+          const mk = (w, vx) => ({
+            id: Math.random().toString(36).slice(2), kind: "twig", img: p.img,
+            x: p.x + (Math.random() - 0.5) * 10, y: ground - 1, w,
+            h: Math.max(18, p.h * 0.9), vx, vy: -1.2,
+            rot: p.rot + (Math.random() - 0.5) * 0.2, rVel: (Math.random() - 0.5) * 0.06,
+            termVy: p.termVy, dragY: p.dragY, born: now, snapped: true, dragging: false, dead: false, ph: p.ph
           });
-          pickups.push(mk(p.w*0.55, -1.2), mk(p.w*0.35, 1.2));
+          pickups.push(mk(p.w * 0.55, -1.2), mk(p.w * 0.35, 1.2));
         }
       }
 
-      // settle on ground with per-kind bounce/friction/rolling
-      p.y  = ground;
+      p.y = ground;
       p.vy *= -(p.ph?.bounce ?? 0.25);
       p.vx *=  (p.ph?.friction ?? 0.78);
-// continuous roll coupling while on ground (not just on impact)
-const onGround = p.y >= ground - 0.5;
-if (p.kind === "apple" && onGround) {
-  const couple = p.ph?.rollCouple ?? 0.0015;
-  const clampR = p.ph?.rotClamp   ?? 0.05;
-  // convert some horizontal velocity into angular velocity
-  p.rVel = clampSpin(p.rVel * (p.ph?.rotDampGround ?? 0.90) + p.vx * couple, clampR);
-}
 
+      // rolling couple on ground
       if (p.kind === "apple") {
         const couple = p.ph?.rollCouple ?? 0.0015;
         const clampR = p.ph?.rotClamp   ?? 0.05;
@@ -766,83 +839,169 @@ if (p.kind === "apple" && onGround) {
       } else {
         p.rVel *= (p.ph?.rotDampGround ?? 0.92);
       }
+
       if (Math.abs(p.vy) < 0.02) p.vy = 0;
       if (Math.abs(p.rVel) < 0.001) p.rVel = 0;
     }
 
     // walls
-    if (p.x < p.w/2){ p.x = p.w/2; p.vx *= -0.35; }
-    if (p.x > leafCanvas.width - p.w/2){ p.x = leafCanvas.width - p.w/2; p.vx *= -0.35; }
+    if (p.x < p.w / 2) { p.x = p.w / 2; p.vx *= -0.35; }
+    if (p.x > leafCanvas.width - p.w / 2) { p.x = leafCanvas.width - p.w / 2; p.vx *= -0.35; }
 
-    // per-frame spin clamp
+    // clamp spin
     p.rVel = clampSpin(p.rVel, p.ph?.rotClamp ?? 0.05);
 
-    // aging & decay visual
-    let sat=1, bright=1, blur=0, alpha=1, scale=1;
-    if (ageSec > 8){
-      const t = Math.min(1,(ageSec-8)/10);
-      sat = 1 - t*0.35; bright = 1 - t*0.15; scale = 1 - t*0.02;
-    }
-    if (ageSec > 18){
-      const t = Math.min(1,(ageSec-18)/12);
-      sat -= t*0.25; bright -= t*0.25; blur = t*0.5;
-      if (p.kind==="flower") scale -= t*0.02;
-      if (p.kind==="apple")  scale -= t*0.01;
-    }
-    if (ageSec > 30){
-      const t = Math.min(1,(ageSec-30)/8);
-      alpha = 1 - t; blur += t*0.8; scale -= t*0.03;
-      if (t>=1) p.dead = true;
+    /* ---- apple decay frames & fade (run EVERY frame) ---- */
+/* ---- sequence-driven decay (apple & flower) ---- */
+if (p.kind === "apple" || p.kind === "flower") {
+  let tSince = null;
+  if (p.landedAt != null) tSince = (now - p.landedAt) / 1000;
+
+  if (tSince != null) {
+    const TIMES = (p.kind === "apple")  ? APPLE_STAGE_TIMES  : FLOWER_STAGE_TIMES;
+    const { a, b, k } = frameStageBlend(tSince, TIMES);
+
+    p.stageA = a;     // frame index A
+    p.stageB = b;     // frame index B
+    p.stageK = k;     // 0..1 crossfade
+
+    // fade-out after each item’s threshold
+    const FSTART = (p.kind === "apple") ? APPLE_FADE_START : FLOWER_FADE_START;
+    const FDUR   = (p.kind === "apple") ? APPLE_FADE_DUR   : FLOWER_FADE_DUR;
+    if (tSince >= FSTART) {
+      const ft = clamp(0, (tSince - FSTART) / FDUR, 1);
+      p.alphaOverride = 1 - ft;
+      if (ft >= 1) p.dead = true;
+    } else {
+      p.alphaOverride = undefined;
     }
 
-    // draw shadow if resting
+    // late-stage crumble for flowers (tiny pink flakes)
+    if (p.kind === "flower" && tSince > FLOWER_STAGE_TIMES[2] && Math.random() < 0.08) {
+      const N = 2 + Math.floor(Math.random()*3);
+      for (let i=0;i<N;i++){
+        dust.push({
+          x: p.x + (Math.random()-0.5)*p.w*0.4,
+          y: p.y + p.h*0.45 + Math.random()*3,
+          r: rand(0.8, 1.8),
+          a: rand(0.35, 0.55),
+          vx: rand(-0.4, 0.4),
+          vy: rand(0.6, 1.2),
+          color: [230+Math.random()*15, 155+Math.random()*20, 165+Math.random()*25] // soft pinks
+        });
+      }
+    }
+
+  } else {
+    // still airborne → always fresh frame
+    p.stageA = 0; p.stageB = 0; p.stageK = 0; p.alphaOverride = undefined;
+  }
+}
+
+
+    /* ---- generic aging (SKIP apples so it doesn't fight the sequence) ---- */
+    let sat = 1, bright = 1, blur = 0, alpha = 1, scale = 1;
+  if (p.kind !== "apple" && p.kind !== "flower") {
+      if (ageSec > 8) {
+        const t = Math.min(1, (ageSec - 8) / 10);
+        sat = 1 - t * 0.35; bright = 1 - t * 0.15; scale = 1 - t * 0.02;
+      }
+      if (ageSec > 18) {
+        const t = Math.min(1, (ageSec - 18) / 12);
+        sat -= t * 0.25; bright -= t * 0.25; blur = t * 0.5;
+        if (p.kind === "flower") scale -= t * 0.02;
+        if (p.kind === "twig")   scale -= t * 0.01;
+      }
+      if (ageSec > 30) {
+        const t = Math.min(1, (ageSec - 30) / 8);
+        alpha = 1 - t; blur += t * 0.8; scale -= t * 0.03;
+        if (t >= 1) p.dead = true;
+      }
+    }
+
+    // apply apple fade override if present
+    if (p.alphaOverride !== undefined) alpha *= p.alphaOverride;
+
+    /* ---- draw pickup (shadow + sprite) ---- */
     lctx.save();
     lctx.translate(p.x, p.y);
-    if (Math.abs(p.vy) < 0.02){
+
+    // soft contact shadow when resting
+    if (Math.abs(p.vy) < 0.02) {
       lctx.save();
       lctx.filter = "blur(2px)";
-      lctx.globalAlpha = 0.18*alpha;
+      lctx.globalAlpha = 0.18 * alpha;
       lctx.fillStyle = "#000";
-      lctx.scale(1,0.5);
-      lctx.beginPath(); lctx.ellipse(0, p.h, p.w*0.45, p.h*0.25, 0, 0, Math.PI*2); lctx.fill();
+      lctx.scale(1, 0.5);
+      lctx.beginPath();
+      lctx.ellipse(0, p.h, p.w * 0.45, p.h * 0.25, 0, 0, Math.PI * 2);
+      lctx.fill();
       lctx.restore();
     }
 
-    // item
-    lctx.rotate(p.rot);
-    lctx.filter = `brightness(${bright}) saturate(${sat}) blur(${blur}px)`;
-    lctx.globalAlpha = alpha;
-    const dw = p.w*scale, dh = p.h*scale;
-    lctx.drawImage(p.img, -dw/2, -dh/2, dw, dh);
+    // sprite
+ // sprite (with apple crossfade if needed)
+lctx.rotate(p.rot);
+lctx.filter = `brightness(${bright}) saturate(${sat}) blur(${blur}px)`;
+lctx.globalAlpha = (p.alphaOverride !== undefined ? alpha * p.alphaOverride : alpha);
 
-    // apple bruise overlay
-    if (p.kind==="apple" && p.bruised>0){
-      const rr = Math.max(12, p.w*0.18);
-      const g = lctx.createRadialGradient(0,0,4, 0,0,rr);
-      g.addColorStop(0, `rgba(90,45,35,${0.25*p.bruised})`);
+const dw = p.w * scale, dh = p.h * scale;
+
+if (p.kind === "apple" || p.kind === "flower") {
+  const Arr = (p.kind === "apple") ? APPLE_IMGS : FLOWER_IMGS;
+  const aImg = Arr[p.stageA || 0];
+  const bImg = Arr[p.stageB || 0];
+  const k    = clamp(0, p.stageK || 0, 1);
+
+  // base
+  lctx.globalAlpha = (p.alphaOverride !== undefined ? alpha * p.alphaOverride : alpha) * (1 - k);
+  lctx.drawImage(aImg, -dw / 2, -dh / 2, dw, dh);
+
+  // crossfade layer
+  if (k > 0.001 && p.stageA !== p.stageB) {
+    lctx.globalAlpha = (p.alphaOverride !== undefined ? alpha * p.alphaOverride : alpha) * k;
+    lctx.drawImage(bImg, -dw / 2, -dh / 2, dw, dh);
+  }
+
+  // restore for later painting
+  lctx.globalAlpha = (p.alphaOverride !== undefined ? alpha * p.alphaOverride : alpha);
+
+} else {
+  lctx.drawImage(p.img, -dw / 2, -dh / 2, dw, dh);
+}
+
+
+
+    // bruise overlay (apples)
+    if (p.kind === "apple" && p.bruised > 0) {
+      const rr = Math.max(12, p.w * 0.18);
+      const g = lctx.createRadialGradient(0, 0, 4, 0, 0, rr);
+      g.addColorStop(0, `rgba(90,45,35,${0.25 * p.bruised})`);
       g.addColorStop(1, "rgba(90,45,35,0)");
       lctx.globalCompositeOperation = "multiply";
-      lctx.fillStyle = g; lctx.beginPath(); lctx.arc(0,0,rr,0,Math.PI*2); lctx.fill();
+      lctx.fillStyle = g;
+      lctx.beginPath(); lctx.arc(0, 0, rr, 0, Math.PI * 2); lctx.fill();
       lctx.globalCompositeOperation = "source-over";
     }
 
     lctx.restore();
   });
 
-  // ---------------- dust ----------------
-  dust = dust.filter(d=>d.a>0);
-  dust.forEach(d=>{
+  /* ---------------- dust ---------------- */
+  dust = dust.filter(d => d.a > 0);
+  dust.forEach(d => {
     d.x += d.vx; d.y += d.vy; d.a -= 0.003;
-    lctx.beginPath(); lctx.arc(d.x,d.y,d.r,0,Math.PI*2);
-const col = d.color ? `rgba(${d.color[0]},${d.color[1]},${d.color[2]},${d.a})`
-                    : `rgba(140,140,140,${d.a})`;
-lctx.fillStyle = col;
-lctx.fill();
-
+    lctx.beginPath(); lctx.arc(d.x, d.y, d.r, 0, Math.PI * 2);
+    const col = d.color
+      ? `rgba(${d.color[0]},${d.color[1]},${d.color[2]},${d.a})`
+      : `rgba(140,140,140,${d.a})`;
+    lctx.fillStyle = col;
+    lctx.fill();
   });
 
   requestAnimationFrame(leafLoop);
 }
+
 
 /* ---------- leaf spawning driven by scroll ---------- */
 let lastSeg = -1;
