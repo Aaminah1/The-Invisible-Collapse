@@ -260,7 +260,7 @@ const LEAF_SRC_BY_STAGE = {
 const LEAF_SPEED  = { 0: [0.5,1.1], 1: [1.0,2.0], 2: [1.8,3.0] };
 const CANOPY_X_BAND = [0.25, 0.75];
 const CANOPY_Y_BAND = [0.02, 0.20];
-const GROUND_RISE_PX = 36;
+const GROUND_RISE_PX = 59;
 
 const SEG_DENSITY = [140, 160, 180];
 const MIN_SPAWN   = [1, 2, 3];
@@ -476,7 +476,7 @@ const PICKUP_PHYS = {
 let pickups = [];                         // active pickups
 let dragPick = { active:false, idx:-1 };  // dragging state
 
-function itemForSeg(seg){ return seg===0 ? "apple" : (seg===1 ? "flower" : "twig"); }
+function itemForSeg(seg){ return seg===0 ? "flower" : (seg===1 ? "apple" : "twig"); }
 
 function spawnPickup(kind, treeIdx, clickClientX){
   if (!leafCanvas || !TREE_RECTS.length) return;
@@ -655,6 +655,13 @@ function frameStageBlend(tSec, STAGE_TIMES, XFADE = PICKUP_XFADE){
     : 0;
   return { a, b, k };
 }
+// stage index from tSec (no blending)
+function discreteStage(tSec, STAGE_TIMES){
+  let s = 0;
+  while (s < STAGE_TIMES.length - 1 && tSec >= STAGE_TIMES[s + 1]) s++;
+  return s; // 0..3
+}
+const easeOut = t => 1 - Math.pow(1 - t, 3);
 
 
 function leafLoop(){
@@ -853,48 +860,52 @@ if ((p.kind === "apple" || p.kind === "flower") && p.landedAt == null) p.landedA
 
     /* ---- apple decay frames & fade (run EVERY frame) ---- */
 /* ---- sequence-driven decay (apple & flower) ---- */
+/* ---- sequence-driven decay (apple & flower) without crossfade ---- */
 if (p.kind === "apple" || p.kind === "flower") {
-  let tSince = null;
-  if (p.landedAt != null) tSince = (now - p.landedAt) / 1000;
+  if (p.landedAt != null) {
+    const tSec  = (now - p.landedAt) / 1000;
+    const TIMES = (p.kind === "apple") ? APPLE_STAGE_TIMES : FLOWER_STAGE_TIMES;
 
-  if (tSince != null) {
-    const TIMES = (p.kind === "apple")  ? APPLE_STAGE_TIMES  : FLOWER_STAGE_TIMES;
-    const { a, b, k } = frameStageBlend(tSince, TIMES);
+    // compute desired stage from elapsed time
+    const want = discreteStage(tSec, TIMES);
 
-    p.stageA = a;     // frame index A
-    p.stageB = b;     // frame index B
-    p.stageK = k;     // 0..1 crossfade
+    // if we advanced a stage, hard-switch the frame and fire a tiny physical cue
+    if ((p.stageIdx ?? 0) !== want) {
+      p.stageIdx = want;                 // commit frame index
+      p.stagePulse = 1.0;                // 0..1 decaying “squash” pulse
+      p.stageJitter = (Math.random() * 2 - 1) * 0.06; // one-time angle nudge
 
-    // fade-out after each item’s threshold
+      // a few crumble/dust bits to camouflage the cut
+      const N = (p.kind === "flower") ? 10 : 6;
+      for (let i = 0; i < N; i++) {
+        dust.push({
+          x: p.x + (Math.random() - 0.5) * p.w * 0.45,
+          y: p.y + p.h * 0.40 + Math.random() * 4,
+          r: (p.kind === "flower") ? rand(0.8, 1.8) : rand(1.2, 2.4),
+          a: rand(0.35, 0.55),
+          vx: rand(-0.5, 0.5),
+          vy: rand(0.6, 1.4),
+          color: (p.kind === "flower")
+            ? [230 + Math.random()*15, 155 + Math.random()*25, 165 + Math.random()*25]  // pink specks
+            : undefined // default grey/brown
+        });
+      }
+    }
+
+    // fade-out schedules stay item-specific
     const FSTART = (p.kind === "apple") ? APPLE_FADE_START : FLOWER_FADE_START;
     const FDUR   = (p.kind === "apple") ? APPLE_FADE_DUR   : FLOWER_FADE_DUR;
-    if (tSince >= FSTART) {
-      const ft = clamp(0, (tSince - FSTART) / FDUR, 1);
+    if (tSec >= FSTART) {
+      const ft = clamp(0, (tSec - FSTART) / FDUR, 1);
       p.alphaOverride = 1 - ft;
       if (ft >= 1) p.dead = true;
     } else {
       p.alphaOverride = undefined;
     }
 
-    // late-stage crumble for flowers (tiny pink flakes)
-    if (p.kind === "flower" && tSince > FLOWER_STAGE_TIMES[2] && Math.random() < 0.08) {
-      const N = 2 + Math.floor(Math.random()*3);
-      for (let i=0;i<N;i++){
-        dust.push({
-          x: p.x + (Math.random()-0.5)*p.w*0.4,
-          y: p.y + p.h*0.45 + Math.random()*3,
-          r: rand(0.8, 1.8),
-          a: rand(0.35, 0.55),
-          vx: rand(-0.4, 0.4),
-          vy: rand(0.6, 1.2),
-          color: [230+Math.random()*15, 155+Math.random()*20, 165+Math.random()*25] // soft pinks
-        });
-      }
-    }
-
   } else {
-    // still airborne → always fresh frame
-    p.stageA = 0; p.stageB = 0; p.stageK = 0; p.alphaOverride = undefined;
+    // airborne
+    p.stageIdx = 0; p.alphaOverride = undefined;
   }
 }
 
@@ -949,26 +960,29 @@ const dw = p.w * scale, dh = p.h * scale;
 
 if (p.kind === "apple" || p.kind === "flower") {
   const Arr = (p.kind === "apple") ? APPLE_IMGS : FLOWER_IMGS;
-  const aImg = Arr[p.stageA || 0];
-  const bImg = Arr[p.stageB || 0];
-  const k    = clamp(0, p.stageK || 0, 1);
+  const frame = Arr[p.stageIdx || 0];
 
-  // base
-  lctx.globalAlpha = (p.alphaOverride !== undefined ? alpha * p.alphaOverride : alpha) * (1 - k);
-  lctx.drawImage(aImg, -dw / 2, -dh / 2, dw, dh);
-
-  // crossfade layer
-  if (k > 0.001 && p.stageA !== p.stageB) {
-    lctx.globalAlpha = (p.alphaOverride !== undefined ? alpha * p.alphaOverride : alpha) * k;
-    lctx.drawImage(bImg, -dw / 2, -dh / 2, dw, dh);
+  // stage pulse decays → micro squash (feels like settling/wilting)
+  if (p.stagePulse && p.stagePulse > 0) {
+    const t = easeOut(p.stagePulse);
+    const sx = 1 + 0.03 * t;      // slight grow
+    const sy = 1 - 0.03 * t;      // slight squash
+    lctx.scale(sx, sy);
+    p.stagePulse *= 0.85;         // decay
+    if (p.stagePulse < 0.01) p.stagePulse = 0;
   }
 
-  // restore for later painting
-  lctx.globalAlpha = (p.alphaOverride !== undefined ? alpha * p.alphaOverride : alpha);
+  // tiny one-shot angle nudge on switch
+  if (p.stageJitter) {
+    p.rot += p.stageJitter;
+    p.stageJitter = 0;
+  }
 
+  lctx.drawImage(frame, -dw / 2, -dh / 2, dw, dh);
 } else {
   lctx.drawImage(p.img, -dw / 2, -dh / 2, dw, dh);
 }
+
 
 
 
@@ -1744,6 +1758,42 @@ ScrollTrigger.create({
       breathingOn = false;
     }
     setStageProgress(self.progress);
+     setGroundProgress(self.progress);  
+    function setGroundProgress(p){
+  // Determine which segment we are in
+  const seg = p < 1/3 ? 0 : p < 2/3 ? 1 : 2;
+  const t   = (p < 1/3) ? (p/(1/3))
+             : (p < 2/3) ? ((p-1/3)/(1/3))
+             : ((p-2/3)/(1/3));
+
+  const g0 = document.querySelector('#ground .stage0');
+  const g1 = document.querySelector('#ground .stage1');
+  const g2 = document.querySelector('#ground .stage2');
+  const g3 = document.querySelector('#ground .stage3');
+
+  if (!g0) return;
+
+  // fade logic (same pattern as tree stages)
+  if (seg === 0){
+    g0.style.opacity = 1 - t;
+    g1.style.opacity = t;
+    g2.style.opacity = 0;
+    g3.style.opacity = 0;
+  }
+  if (seg === 1){
+    g0.style.opacity = 0;
+    g1.style.opacity = 1 - t;
+    g2.style.opacity = t;
+    g3.style.opacity = 0;
+  }
+  if (seg === 2){
+    g0.style.opacity = 0;
+    g1.style.opacity = 0;
+    g2.style.opacity = 1 - t;
+    g3.style.opacity = t;
+  }
+}
+
     updateLeavesForProgress(self.progress);
 
     if (window.__sky__)   window.__sky__.update(self.progress);

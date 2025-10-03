@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Smooth Background Bridge</title>
+  <title>The invisible Collapse</title>
 
   <!-- GSAP -->
   <script src="https://cdn.jsdelivr.net/npm/gsap@3/dist/gsap.min.js"></script>
@@ -55,7 +55,15 @@
   <!-- the “bridge” region controls the background transition -->
   <section id="bridge"></section>
 
-  
+  <section id="forestReveal" class="section-forest">
+  <!-- ▼▼ NEW: ground layer ▼▼ -->
+  <div id="ground">
+    <img class="g stage0" src="images/ground_stage0.png" alt="">
+      <img class="g stage1" src="images/ground_stage1.png" alt="" style="opacity:0">
+  <img class="g stage2" src="images/ground_stage2.png" alt="" style="opacity:0">
+  <img class="g stage3" src="images/ground_stage3.png" alt="" style="opacity:0">
+  </div>
+  <!-- ▲▲ NEW ▲▲ -->
 
   <!-- Forest reveal (after parallax/bridge content) -->
 <section id="forestReveal" class="section-forest">
