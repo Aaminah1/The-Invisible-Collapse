@@ -207,18 +207,9 @@ function setupReveal(){
 
   gsap.set(".tree-back, .tree", { opacity: 0, clipPath: "inset(100% 0 0 0)" });
 }
-function segIndex4(p){ 
-  return p < 0.25 ? 0 : (p < 0.50 ? 1 : (p < 0.75 ? 2 : 3)); 
-}
-function segT4(p){
-  if (p < 0.25) return p / 0.25;              // 0..1
-  if (p < 0.50) return (p - 0.25) / 0.25;     // 0..1
-  if (p < 0.75) return (p - 0.50) / 0.25;     // 0..1
-  return (p - 0.75) / 0.25;                   // 0..1
-}
 
 /* ---------- crossfade stages while pinned ---------- */
-const SCROLL_LEN = 1900;
+const SCROLL_LEN = 1400;
 let breathingOn = true;
 
 function segIndex(p){ return p < 1/3 ? 0 : (p < 2/3 ? 1 : 2); }
@@ -228,9 +219,10 @@ function segT(p){
   return (p - 2/3) / (1/3);
 }
 function easeInOut(t){ return t*t*(3-2*t); }
+
 function setStageProgress(p){
-  const seg = segIndex4(p);
-  const t   = easeInOut(clamp(0, segT4(p), 1));
+  const seg = segIndex(p);
+  const t   = easeInOut(clamp(0, segT(p), 1));
 
   document.querySelectorAll("#forestReveal .tree-wrap").forEach(w=>{
     const base = w.querySelector(".tree") || w.querySelector(".tree-back");
@@ -243,64 +235,21 @@ function setStageProgress(p){
       if (m1)   m1.style.opacity   = `${t}`;
       if (m2)   m2.style.opacity   = "0";
       if (bare) bare.style.opacity = "0";
-      w.style.opacity = "";
-      w.style.filter  = "";
-      w.style.removeProperty("--fadeY");   // <- clear
-    }
-    else if (seg === 1){   // mid1 -> mid2
+    } else if (seg === 1){ // mid1 -> mid2
       if (base) base.style.opacity = "0";
       if (m1)   m1.style.opacity   = `${1 - t}`;
       if (m2)   m2.style.opacity   = `${t}`;
       if (bare) bare.style.opacity = "0";
-      w.style.opacity = "";
-      w.style.filter  = "";
-      w.style.removeProperty("--fadeY");   // <- clear
-    }
-    else if (seg === 2){   // mid2 -> bare
+    } else {               // mid2 -> bare
       if (base) base.style.opacity = "0";
       if (m1)   m1.style.opacity   = "0";
       if (m2)   m2.style.opacity   = `${1 - t}`;
       if (bare) bare.style.opacity = `${t}`;
-      w.style.opacity = "";
-      w.style.filter  = "";
-      w.style.removeProperty("--fadeY");   // <- clear
-    }
-    else {                 // seg === 3 : already bare → fade out only
-      if (base) base.style.opacity = "0";
-      if (m1)   m1.style.opacity   = "0";
-      if (m2)   m2.style.opacity   = "0";
-      if (bare) bare.style.opacity = "1";               // stay visually bare
-      w.style.opacity = `${1 - t}`;                     // fade the whole tree
-      w.style.filter  = `blur(${(t*2).toFixed(2)}px)`;  // optional soften
-      w.style.setProperty("--fadeY", `${(t*40).toFixed(1)}px`); // vertical sink only
-      // NOTE: we do NOT set w.style.transform here anymore
     }
   });
 
-  updateShadows4(p);
+  updateShadows(p); // animate contact shadows
 }
-
-function updateShadows4(p){
-  const seg = segIndex4(p);
-  const t   = easeInOut(clamp(0, segT4(p), 1));
-  const stillness = p>0.70 ? (p-0.70)/0.30 : 0;
-
-  document.querySelectorAll("#forestReveal .tree-wrap .shadow-oval").forEach(el=>{
-    let op = 0.22, scaleY = 1.0;
-
-    if (seg===1){ op = 0.22 + 0.10*t; scaleY = 1.00 + 0.06*t; }
-    if (seg===2){ op = 0.32 + 0.20*t + 0.15*stillness; scaleY = 1.06 + 0.12*t; }
-    if (seg===3){ 
-      // fade out to nothing
-      op = (0.67 * (1 - t)); 
-      scaleY = 1.18; 
-    }
-
-    el.style.opacity = op.toFixed(3);
-    el.style.transform = `translateX(-50%) scale(1, ${scaleY.toFixed(3)})`;
-  });
-}
-
 
 /* ---------- LEAVES (strict color, reliable spawn) ---------- */
 const LEAF_SRC_BY_STAGE = {
@@ -1810,47 +1759,38 @@ ScrollTrigger.create({
     }
     setStageProgress(self.progress);
      setGroundProgress(self.progress);  
-     // fade leaf canvas only during seg 3
-{
-  const p = self.progress;
-  const q = clamp(0, (p - 0.75) / 0.25, 1);  // 0..1 only in last quarter
-  const lc = document.getElementById("leafCanvas");
-  if (lc){
-    lc.style.opacity = (1 - q).toFixed(3);
-    lc.style.filter  = `blur(${(q*1.5).toFixed(2)}px)`;
-    // (optional) lc.style.pointerEvents = q>0.2 ? "none" : "auto";
-  }
-}
-
     function setGroundProgress(p){
-  // quarters now
-  const seg = segIndex4(p);
-  const t   = easeInOut(clamp(0, segT4(p), 1));
+  // Determine which segment we are in
+  const seg = p < 1/3 ? 0 : p < 2/3 ? 1 : 2;
+  const t   = (p < 1/3) ? (p/(1/3))
+             : (p < 2/3) ? ((p-1/3)/(1/3))
+             : ((p-2/3)/(1/3));
 
   const g0 = document.querySelector('#ground .stage0');
   const g1 = document.querySelector('#ground .stage1');
   const g2 = document.querySelector('#ground .stage2');
   const g3 = document.querySelector('#ground .stage3');
-  const groundWrap = document.getElementById('ground');
 
-  if (!g0 || !groundWrap) return;
+  if (!g0) return;
 
-  // reset transforms each time
-  groundWrap.style.transform = "";
-
+  // fade logic (same pattern as tree stages)
   if (seg === 0){
-    g0.style.opacity = 1 - t; g1.style.opacity = t; g2.style.opacity = 0; g3.style.opacity = 0;
+    g0.style.opacity = 1 - t;
+    g1.style.opacity = t;
+    g2.style.opacity = 0;
+    g3.style.opacity = 0;
   }
   if (seg === 1){
-    g0.style.opacity = 0; g1.style.opacity = 1 - t; g2.style.opacity = t; g3.style.opacity = 0;
+    g0.style.opacity = 0;
+    g1.style.opacity = 1 - t;
+    g2.style.opacity = t;
+    g3.style.opacity = 0;
   }
   if (seg === 2){
-    g0.style.opacity = 0; g1.style.opacity = 0; g2.style.opacity = 1 - t; g3.style.opacity = t;
-  }
-  if (seg === 3){
-    // fade the bare ground away and sink it slightly
-    g0.style.opacity = 0; g1.style.opacity = 0; g2.style.opacity = 0; g3.style.opacity = 1 - t;
-    groundWrap.style.transform = `translateY(${(t*80).toFixed(1)}px)`;
+    g0.style.opacity = 0;
+    g1.style.opacity = 0;
+    g2.style.opacity = 1 - t;
+    g3.style.opacity = t;
   }
 }
 
@@ -1906,16 +1846,6 @@ bringToFront(document.getElementById("bgFog"));   // z:6 (fog layers)
 bringToFront(document.getElementById("bgRays"));  // z:7 (smog = top)
 
     }
-    gsap.set("#leafCanvas", { opacity: 1, clearProps: "filter" });
-document.querySelectorAll("#forestReveal .tree-wrap").forEach(w=>{
-  w.style.opacity = ""; w.style.transform = ""; w.style.filter = "";
-});
-document.querySelectorAll("#forestReveal .tree-wrap").forEach(w=>{
-  w.style.opacity = "";
-  w.style.filter  = "";
-  w.style.removeProperty("--fadeY");
-});
-
   }
 });
 
