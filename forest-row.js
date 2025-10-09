@@ -40,6 +40,14 @@ const FLOWER_FADE_DUR    = 5;               // how long it takes to disappear
 /* crossfade length shared by both */
 const PICKUP_XFADE = 1.25; // sec of photometric blend per boundary
 
+// how much of the pinned span to reserve for the tractor at the very end
+const TRACTOR_TAIL = 0.22; // 12% of the pin for the tractor
+window.__TRACTOR_TAIL = 0.22;
+// How much of the pinned span is for the FOREST transitions (0..1)
+const FOREST_PORTION = 0.65;   // ← forest completes at 84% of the pin
+
+// Give more scroll after the forest (the “tail”)
+const EXTRA_TAIL_PX = 8400;     // runway just for the tractor
 
 
 /* ---------- helpers ---------- */
@@ -1743,108 +1751,124 @@ function updateShadows(p){
 /* ---------- keep FX on top of parallax (but under trees) ---------- */
 function bringToFront(el){ if(el && el.parentNode){ el.parentNode.appendChild(el); } }
 
-/* ---------- pinned scroll control ---------- */
+/* ---------- pinned scroll control (forest + tractor tail) ---------- */
 ScrollTrigger.create({
   trigger: "#forestReveal",
   start: "bottom bottom",
-  end:   "+=" + SCROLL_LEN,
+  end: "+=" + (SCROLL_LEN + EXTRA_TAIL_PX),  // add runway after the forest
   pin: true,
   pinSpacing: true,
   scrub: true,
+
   onUpdate(self){
-    window.__currentProgress = self.progress; 
-    if (breathingOn && self.progress > 0.001){
+    // p = 0..1 across the whole pinned range (forest + tail)
+    const p = self.progress;
+
+    // forestP = 0..1 only over the FOREST portion, then clamped (freezes at bare)
+    const forestP = Math.min(p / FOREST_PORTION, 1);
+
+    // expose for any other code that reads it
+    window.__currentProgress = forestP;
+
+    // --- FOREST SYSTEMS (drive with forestP only) ---
+    if (breathingOn && forestP > 0.001){
       pauseBreathing();
       breathingOn = false;
     }
-    setStageProgress(self.progress);
-     setGroundProgress(self.progress);  
-    function setGroundProgress(p){
-  // Determine which segment we are in
-  const seg = p < 1/3 ? 0 : p < 2/3 ? 1 : 2;
-  const t   = (p < 1/3) ? (p/(1/3))
-             : (p < 2/3) ? ((p-1/3)/(1/3))
-             : ((p-2/3)/(1/3));
 
-  const g0 = document.querySelector('#ground .stage0');
-  const g1 = document.querySelector('#ground .stage1');
-  const g2 = document.querySelector('#ground .stage2');
-  const g3 = document.querySelector('#ground .stage3');
+    // trees + ground phases should use forestP (not total p)
+    setStageProgress(forestP);
+    setGroundProgress(forestP);
 
-  if (!g0) return;
-
-  // fade logic (same pattern as tree stages)
-  if (seg === 0){
-    g0.style.opacity = 1 - t;
-    g1.style.opacity = t;
-    g2.style.opacity = 0;
-    g3.style.opacity = 0;
-  }
-  if (seg === 1){
-    g0.style.opacity = 0;
-    g1.style.opacity = 1 - t;
-    g2.style.opacity = t;
-    g3.style.opacity = 0;
-  }
-  if (seg === 2){
-    g0.style.opacity = 0;
-    g1.style.opacity = 0;
-    g2.style.opacity = 1 - t;
-    g3.style.opacity = t;
-  }
-}
-
-    updateLeavesForProgress(self.progress);
-
-    if (window.__sky__)   window.__sky__.update(self.progress);
-    if (window.__sil__)   window.__sil__.update(self.progress);
-    if (window.__rays__)  window.__rays__.update(self.progress);
-    if (window.__fog__)   window.__fog__.update(self.progress);
-    if (window.__grade__) window.__grade__.update(self.progress);
-    if (window.__dof__)   window.__dof__.update(self.progress);
-    if (window.__pgrade__) window.__pgrade__.update(self.progress);
-    if (window.__rainbow__) window.__rainbow__.update(self.progress);
-    if (window.__fliers__) window.__fliers__.update(self.progress);
-
-  },
-  onLeaveBack(){
-    setStageProgress(0);
-    if (!breathingOn){
-      resumeBreathing();
-      breathingOn = true;
+    // only spawn/update leaves while the forest is still evolving
+    if (forestP < 1){
+      updateLeavesForProgress(forestP);
     }
-    if (window.__sky__)   window.__sky__.update(0);
-    if (window.__sil__)   window.__sil__.update(0);
-    if (window.__rays__)  window.__rays__.update(0);
-    if (window.__fog__)   window.__fog__.update(0);
-    if (window.__grade__) window.__grade__.update(0);
-    if (window.__dof__)   window.__dof__.update(0);
-    if (window.__pgrade__) window.__pgrade__.update(0);
-    if (window.__rainbow__) window.__rainbow__.update(0);
-    if (window.__fliers__) window.__fliers__.update(0);
 
+    // background stacks freeze once forestP hits 1 (bare look locked in)
+    if (window.__sky__)     window.__sky__.update(forestP);
+    if (window.__sil__)     window.__sil__.update(forestP);
+    if (window.__rays__)    window.__rays__.update(forestP);
+    if (window.__fog__)     window.__fog__.update(forestP);
+    if (window.__grade__)   window.__grade__.update(forestP);
+    if (window.__dof__)     window.__dof__.update(forestP);
+    if (window.__pgrade__)  window.__pgrade__.update(forestP);
+    if (window.__rainbow__) window.__rainbow__.update(forestP);
+    if (window.__fliers__)  window.__fliers__.update(forestP);
+
+    // --- TRACTOR TAIL (0..1 only inside the tail) ---
+    // tailT = 0 while in forest; grows 0→1 only after forest is done
+    const tailT = Math.max(0, Math.min(1, (p - FOREST_PORTION) / (1 - FOREST_PORTION)));
+    if (window.__tractor__ && typeof window.__tractor__.updateTail === "function"){
+      window.__tractor__.updateTail(tailT);
+    }
+
+    // --- local helper kept here to avoid changing your global function list ---
+    function setGroundProgress(pct){
+      const seg = (pct < 1/3) ? 0 : (pct < 2/3 ? 1 : 2);
+      const t   = (pct < 1/3) ? (pct/(1/3))
+                : (pct < 2/3) ? ((pct-1/3)/(1/3))
+                : ((pct-2/3)/(1/3));
+
+      const g0 = document.querySelector('#ground .stage0');
+      const g1 = document.querySelector('#ground .stage1');
+      const g2 = document.querySelector('#ground .stage2');
+      const g3 = document.querySelector('#ground .stage3');
+      if (!g0) return;
+
+      if (seg === 0){
+        g0.style.opacity = 1 - t; g1.style.opacity = t;     g2.style.opacity = 0;     g3.style.opacity = 0;
+      } else if (seg === 1){
+        g0.style.opacity = 0;     g1.style.opacity = 1 - t; g2.style.opacity = t;     g3.style.opacity = 0;
+      } else {
+        g0.style.opacity = 0;     g1.style.opacity = 0;     g2.style.opacity = 1 - t; g3.style.opacity = t;
+      }
+    }
   },
+
+  onLeaveBack(){
+    // reset forest to start
+    setStageProgress(0);
+    if (!breathingOn){ resumeBreathing(); breathingOn = true; }
+
+    if (window.__sky__)     window.__sky__.update(0);
+    if (window.__sil__)     window.__sil__.update(0);
+    if (window.__rays__)    window.__rays__.update(0);
+    if (window.__fog__)     window.__fog__.update(0);
+    if (window.__grade__)   window.__grade__.update(0);
+    if (window.__dof__)     window.__dof__.update(0);
+    if (window.__pgrade__)  window.__pgrade__.update(0);
+    if (window.__rainbow__) window.__rainbow__.update(0);
+    if (window.__fliers__)  window.__fliers__.update(0);
+
+    // hide tractor if rewinding into forest
+    if (window.__tractor__ && typeof window.__tractor__.updateTail === "function"){
+      window.__tractor__.updateTail(0);
+    }
+  },
+
   onRefresh: () => {
-    cacheTreeRects(); sizeLeafCanvas();
-     if (window.__sky__)   { window.__sky__.build(); window.__sky__.update(window.__currentProgress || 0); }
-    if (window.__sky__)   window.__sky__.build();
-    if (window.__sil__)   window.__sil__.build();
-    if (window.__rays__)  window.__rays__.build();
-    if (window.__fog__)   window.__fog__.build();
-    if (window.__grade__) window.__grade__.build();
-    if (window.__dof__)   window.__dof__.build();
-    if (window.__pgrade__) { window.__pgrade__.build(); window.__pgrade__.update(0); }
-if (window.__rainbow__) window.__rainbow__.build();
-if (window.__fliers__) window.__fliers__.build();
+    cacheTreeRects();
+    sizeLeafCanvas();
+
+    // rebuild once; then sync visuals to current forest progress
+    if (window.__sky__)     { window.__sky__.build();     window.__sky__.update(window.__currentProgress || 0); }
+    if (window.__sil__)      window.__sil__.build();
+    if (window.__rays__)     window.__rays__.build();
+    if (window.__fog__)      window.__fog__.build();
+    if (window.__grade__)    window.__grade__.build();
+    if (window.__dof__)      window.__dof__.build();
+    if (window.__pgrade__)  { window.__pgrade__.build();  window.__pgrade__.update(0); }
+    if (window.__rainbow__)  window.__rainbow__.build();
+    if (window.__fliers__)   window.__fliers__.build();
 
     const bg = document.getElementById("bg");
     if (bg){
-     bringToFront(document.getElementById("bgSky"));   // z:1
-bringToFront(document.getElementById("bgSil"));   // z:1 (near silhouettes)
-bringToFront(document.getElementById("bgGrade")); // z:2 (tint/vignette)
-bringToFront(document.getElementById("bgFog"));   // z:6 (fog layers)
-bringToFront(document.getElementById("bgRays"));  // z:7 (smog = top)
-
+      bringToFront(document.getElementById("bgSky"));   // z:1
+      bringToFront(document.getElementById("bgSil"));   // z:1 (near silhouettes)
+      bringToFront(document.getElementById("bgGrade")); // z:2 (tint/vignette)
+      bringToFront(document.getElementById("bgFog"));   // z:6 (fog layers)
+      bringToFront(document.getElementById("bgRays"));  // z:7 (smog = top)
     }
   }
 });
