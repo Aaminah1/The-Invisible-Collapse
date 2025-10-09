@@ -1,0 +1,10 @@
+#tractorLayer{ position:absolute; inset:0; pointer-events:none;  z-index: 80;}
+#tractor{
+  position:absolute;
+  bottom: var(--tractorGround, 25px); /* align with your ground (GROUND_RISE_PX) */
+  height: min(22vmin, 220px);
+  transform: translate3d(120vw,0,0);
+  opacity: 0;
+  will-change: transform, opacity;
+
+}
