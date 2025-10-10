@@ -681,6 +681,8 @@ function leafLoop(){
 
   const now = performance.now(); // single timestamp per frame
   lctx.clearRect(0, 0, leafCanvas.width, leafCanvas.height);
+    const tractorRect = TRACTOR_WASH.enabled ? tractorRectInCanvas() : null;
+
 
   /* ---------------- settled leaves ---------------- */
   settled.forEach(p => {
@@ -728,6 +730,8 @@ function leafLoop(){
 
     if (p.x < half) { p.x = half; p.vx *= -BOUNCE; }
     if (p.x > leafCanvas.width - half) { p.x = leafCanvas.width - half; p.vx *= -BOUNCE; }
+    // tractor wash on ground leaves
+    if (tractorRect) applyTractorWashToPoint(p, tractorRect);
 
     // draw
     lctx.save();
@@ -989,6 +993,8 @@ if (p.kind === "apple" || p.kind === "flower") {
     p.rot += p.stageJitter;
     p.stageJitter = 0;
   }
+    // tractor wash on pickups (apples/flowers/twigs)
+    if (tractorRect) applyTractorWashToPoint(p, tractorRect);
 
   lctx.drawImage(frame, -dw / 2, -dh / 2, dw, dh);
 } else {
@@ -1388,6 +1394,84 @@ s.textContent = `
   window.addEventListener("forest-reset", resetAll);
 })();
 
+/* ---------- TRACTOR WASH (impulse to ground items near the tractor) ---------- */
+const TRACTOR_WASH = {
+  enabled: true,
+  liftVy: -2.2,         // upward kick
+  pushVx: 1.6,          // sideways push (outward from tractor center)
+  radius: 80,          // influence radius (px) around tractor “footprint”
+  rectPad: 12,          // expand the footprint a bit so it feels generous
+  maxBoostPerFrame: 0.9 // clamp so impulses don’t explode at high FPS
+};
+
+let __tractorPrevX = null;
+let __tractorSpeed = 0; // px/frame-ish
+
+function tractorRectInCanvas(){
+  if (!leafCanvas) return null;
+  const tractor = document.getElementById("tractor");
+  if (!tractor) return null;
+
+  const cb = leafCanvas.getBoundingClientRect();
+  const tb = tractor.getBoundingClientRect();
+  // Map to canvas coords
+  let x1 = tb.left  - cb.left - TRACTOR_WASH.rectPad;
+  let y1 = tb.top   - cb.top  - TRACTOR_WASH.rectPad;
+  let x2 = tb.right - cb.left + TRACTOR_WASH.rectPad;
+  let y2 = tb.bottom- cb.top  + TRACTOR_WASH.rectPad;
+
+  // Clamp
+  x1 = Math.max(-200, x1); y1 = Math.max(-200, y1);
+  x2 = Math.min(leafCanvas.width + 200, x2);
+  y2 = Math.min(leafCanvas.height + 200, y2);
+
+  // simple speed estimate (x only is fine for our sideways puff)
+  const cx = (x1 + x2) * 0.5;
+  if (__tractorPrevX != null){
+    __tractorSpeed = Math.max(0, Math.min(30, Math.abs(cx - __tractorPrevX))); // clamp
+  }
+  __tractorPrevX = cx;
+
+  return { x1, y1, x2, y2, cx, cy:(y1+y2)*0.5 };
+}
+
+function applyTractorWashToPoint(pt, rect){
+  // pt = {x,y,vx,vy, rVel?, air?}, rect = tractorRect
+  // influence strongest near the rect (footprint), fades with distance
+  const rx = Math.max(rect.x1, Math.min(pt.x, rect.x2));
+  const ry = Math.max(rect.y1, Math.min(pt.y, rect.y2));
+  const dx = pt.x - rx;
+  const dy = pt.y - ry;
+  const d  = Math.hypot(dx, dy);
+
+  const R = TRACTOR_WASH.radius;
+  if (d > R) return;
+
+  const t = 1 - (d / R);                // 0..1 falloff
+  const speedMul = 0.25 + 0.75*(__tractorSpeed / 30); // 0.25..1
+  const boost = Math.min(TRACTOR_WASH.maxBoostPerFrame, t * speedMul);
+
+  // push outward from the footprint; sideways bias by which side of center we’re on
+  const side = Math.sign((pt.x - rect.cx) || 1); // left: -1, right: +1
+  pt.vx += (TRACTOR_WASH.pushVx * side) * boost * (0.8 + Math.random()*0.4);
+  pt.vy += (TRACTOR_WASH.liftVy)          * boost * (0.8 + Math.random()*0.4);
+
+  // wake it into “air” behavior if it has that flag
+  if ("air" in pt) pt.air = true;
+
+  // a little tumble
+  if ("rVel" in pt) pt.rVel += (Math.random()-0.5) * 0.08 * boost;
+
+  // occasional dust kick from the ground edge
+  if (Math.random() < 0.05 * boost){
+    dust.push({
+      x: pt.x + (Math.random()-0.5)*8,
+      y: leafCanvas.height - GROUND_RISE_PX - (Math.random()*10+6),
+      r: (Math.random()*3)+1.2, a: 0.22 + Math.random()*0.18,
+      vx: (Math.random()-0.5)*1.0, vy: 1.2 + Math.random()*1.3
+    });
+  }
+}
 
 /* ---------- BACKGROUND SKY (expose sun center via CSS vars) ---------- */
 (function BackgroundSky() {
