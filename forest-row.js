@@ -732,6 +732,11 @@ function leafLoop(){
     if (p.x > leafCanvas.width - half) { p.x = leafCanvas.width - half; p.vx *= -BOUNCE; }
     // tractor wash on ground leaves
     if (tractorRect) applyTractorWashToPoint(p, tractorRect);
+if (tractorRect){
+  const vyBefore = p.vy;
+  applyTractorWashToPoint(p, tractorRect);
+  if (p.kind === "twig") p.vy = Math.min(p.vy, vyBefore - 0.3); // cap lift on twigs
+}
 
     // draw
     lctx.save();
@@ -993,8 +998,7 @@ if (p.kind === "apple" || p.kind === "flower") {
     p.rot += p.stageJitter;
     p.stageJitter = 0;
   }
-    // tractor wash on pickups (apples/flowers/twigs)
-    if (tractorRect) applyTractorWashToPoint(p, tractorRect);
+    
 
   lctx.drawImage(frame, -dw / 2, -dh / 2, dw, dh);
 } else {
@@ -1077,8 +1081,10 @@ function updateLeavesForProgress(p){
 /* ---------- BACKGROUND FOG (continuous drift) ---------- */
 /* ---------- BACKGROUND FOG (endless tiling + smoother Mid2/Bare) ---------- */
 (function BackgroundFog(){
+  let tailBoost = 0;
   let built = false, t = 0, prog = 0;
   let L1, L2, L3;
+function boostTail(k){ tailBoost = Math.max(0, Math.min(1, k||0)); } // NEW
 
   function css(){
     if (document.getElementById("bgfog-style")) return;
@@ -1156,9 +1162,10 @@ s.textContent = `
     requestAnimationFrame(tick);
   }
 
-  function update(p){
+function update(p){
   build(); if (!L1 || !L2 || !L3) return;
 
+  // helpers local to update
   const clamp01 = v => Math.max(0, Math.min(1, v));
   const smooth  = v => v*v*(3-2*v);
 
@@ -1169,48 +1176,42 @@ s.textContent = `
             : (prog-2/3)/(1/3);
   const t = smooth(clamp01(tSeg));
 
-  // Clear defaults
-  let o1=0, o2=0, o3=0;
+  // Clear defaults (these must exist before you touch them)
+  let o1 = 0, o2 = 0, o3 = 0;
 
-  // ---- We’ll treat L2 as the "near-weighted" fog sheet ----
-  // base “near” emphasis increases as the world gets worse
-  // (low in seg1, stronger in seg2)
-  const nearBiasSeg1 = 0.25;            // subtle bias in Mid1→Mid2
-  const nearBiasSeg2 = 0.55;            // strong bias in Bare
+  // ---- distribution per segment ----
+  // NOTE: these blocks are unchanged from your version, just left intact
+  const nearBiasSeg1 = 0.25;
+  const nearBiasSeg2 = 0.55;
 
   if (seg === 1){
-    // Start a *little* fog immediately in seg1 and grow it softly
-    // Tiny overall density, slightly biased to L2 so it already feels "near"
-    const base = 0.05 + 0.10 * t;       // ~0.05 → 0.15
-    const bias = nearBiasSeg1 * t;      // 0 → nearBiasSeg1
+    const base = 0.05 + 0.10 * t;
+    const bias = nearBiasSeg1 * t;
+    o1 = base * (0.70 - bias*0.4);
+    o2 = base * (1.20 + bias*0.8);
+    o3 = base * (0.85 - bias*0.2);
 
-    // distribute with a near bias: L2 gets the biggest share
-    o1 = base * (0.70 - bias*0.4);      // farthest
-    o2 = base * (1.20 + bias*0.8);      // near-emphasis
-    o3 = base * (0.85 - bias*0.2);      // mid
-
-    // keep fog soft and light in seg1
     const filt = `saturate(${(1 - 0.05*t).toFixed(3)}) brightness(${(1 - 0.03*t).toFixed(3)})`;
     L1.style.filter = `blur(1.4px) ${filt}`;
     L2.style.filter = `blur(1.2px) ${filt}`;
     L3.style.filter = `blur(1.6px) ${filt}`;
   }
   else if (seg === 2){
-    // Bare: overall density rises and near layer dominates more
-    const dens = 0.22 + 0.56 * t;       // total “strength” ramp
-    const bias = nearBiasSeg2 * (0.4 + 0.6*t); // push more to L2 as we progress
+    const dens = 0.22 + 0.56 * t;
+    const bias = nearBiasSeg2 * (0.4 + 0.6*t);
+    o1 = dens * (0.70 - bias*0.35);
+    o2 = dens * (1.35 + bias*0.95);
+    o3 = dens * (0.95 - bias*0.20);
 
-    // heavier distribution with near emphasis
-    o1 = dens * (0.70 - bias*0.35);     // far
-    o2 = dens * (1.35 + bias*0.95);     // near (strongest)
-    o3 = dens * (0.95 - bias*0.20);     // mid
-
-    // grimy/denser look as we approach bare
     const grime = `grayscale(${(0.20 + 0.45*t).toFixed(3)}) contrast(${(1.06 + 0.28*t).toFixed(3)}) brightness(${(0.94 - 0.22*t).toFixed(3)}) saturate(${(1 - 0.22*t).toFixed(3)})`;
     L1.style.filter = `blur(${(1.0 - 0.25*t).toFixed(2)}px) ${grime}`;
     L2.style.filter = `blur(${(0.9 - 0.22*t).toFixed(2)}px) ${grime}`;
     L3.style.filter = `blur(${(1.2 - 0.36*t).toFixed(2)}px) ${grime}`;
   }
+
+  // ✅ Apply tail boost *after* o1/o2/o3 exist
+  const fogMul = 1 + 0.9*tailBoost;
+  o1 *= fogMul; o2 *= fogMul; o3 *= fogMul;
 
   // Clamp & apply
   const c = v => Math.max(0, Math.min(0.95, v));
@@ -1221,23 +1222,67 @@ s.textContent = `
 
 
 
-  window.__fog__ = { build, update };
+ 
+  window.__fog__ = { build, update, boostTail }; // CHANGED
+
+})();
+(function TailSmoke(){
+  let acc = 0; // frame accumulator
+  function tick(doom){
+    // cadence: a few plumes per second as doom grows
+    acc += doom * 0.06;   // called every onUpdate; scale to your frame cadence
+    const need = Math.floor(acc);
+    if (need <= 0) return;
+    acc -= need;
+
+    // darker shade & slightly bigger near the end
+    const d = Math.max(0, Math.min(1, doom));
+    const baseY = (leafCanvas?.height || window.innerHeight) - (GROUND_RISE_PX || 60) - 4;
+    for (let i=0;i<need;i++){
+      const x = (leafCanvas?.width || window.innerWidth) * (0.15 + 0.70*Math.random());
+      // temporarily bias SMOKE colors darker
+      const oldLo = SMOKE.colorLo.slice(), oldHi = SMOKE.colorHi.slice();
+      SMOKE.colorLo = [90  - Math.round(50*d), 90  - Math.round(50*d), 90  - Math.round(50*d)];
+      SMOKE.colorHi = [150 - Math.round(40*d), 150 - Math.round(40*d), 150 - Math.round(40*d)];
+      spawnSmokePlume(x, baseY, 0.7 + 0.6*d);
+      SMOKE.colorLo = oldLo; SMOKE.colorHi = oldHi;
+    }
+  }
+  window.__tailsmoke__ = { tick };
 })();
 
 
 /* ---------- TRACTOR CULL (lift each tree only as the tractor nose passes it + pre-exit animation) ---------- */
+
 (function TractorCull(){
   const PASS_PAD = 8;    // trigger window around tree center
-  const LIFT_PX  = 44;   // lift height
-  const BLUR_PX  = 8;    // blur at peak
-  const DUR      = 0.50; // sec
+  const BLUR_PX  = 8;    // final blur
+  const DUR      = 0.50; // legacy (still used by fade tail)
+
+  // NEW: topple tuning
+  const TOPPLE = {
+    tip1: 6,                 // small pre-tip (deg)
+    preLift: 6,              // tiny lift before falling (px)
+    hinge1: 16,              // first committed lean (deg)
+    hinge2: 52,              // second stage lean (deg)
+    finalRot: 118,           // total rotation at rest (deg)
+    xDrift1: 28,             // slide while leaning (px)
+    xDrift2: 120,            // slide during fall (px)
+    drop1: 10,               // early drop (px)
+    drop2: 46,               // late drop (px)
+    bounceY: 10,             // little ground bounce (px)
+    bounceRot: 4,            // little rotational bounce (deg)
+    tPre:   0.22,            // time pre-lean
+    tLean1: 0.28,            // time to hinge1
+    tLean2: 0.50,            // time to final
+    tFade:  0.60             // fade tail time
+  };
 
   let lastEdgeX = null;
-  let movingLeft = null;      // unknown until we measure real motion
-  let haveDirection = false;  // don’t cull until true
-  let armed = false;          // only cull when the nose is inside the forest band
+  let movingLeft = null;
+  let haveDirection = false;
+  let armed = false;
 
-  // --- tiny helper: quick “chainsaw” jitter ---
   function jitter(el, times=6, amp=1.4, dur=0.04){
     const tl = gsap.timeline();
     for (let i=0;i<times;i++){
@@ -1258,7 +1303,7 @@ s.textContent = `
     if (!bases.length) return null;
     const xs = bases.map(b => {
       const r = b.getBoundingClientRect();
-      return r.left + r.width * 0.5; // center x
+      return r.left + r.width * 0.5;
     });
     return { min: Math.min(...xs), max: Math.max(...xs) };
   }
@@ -1266,18 +1311,16 @@ s.textContent = `
   function tractorNose(){
     const t = document.getElementById("tractor");
     if (!t) return null;
-
     const op = parseFloat(getComputedStyle(t).opacity || "0");
-    if (op < 0.05) return null; // not visible yet
+    if (op < 0.05) return null;
 
     const r = t.getBoundingClientRect();
     const leftEdge  = r.left;
     const rightEdge = r.right;
 
-    // Track motion to determine direction
     const probe = (movingLeft === true) ? leftEdge
                 : (movingLeft === false) ? rightEdge
-                : (lastEdgeX == null ? leftEdge : rightEdge); // neutral: resolve next frame
+                : (lastEdgeX == null ? leftEdge : rightEdge);
 
     if (lastEdgeX != null){
       const dx = probe - lastEdgeX;
@@ -1287,14 +1330,13 @@ s.textContent = `
       }
     }
     lastEdgeX = probe;
-
-    // Return the actual nose based on established direction (otherwise hold off)
     if (!haveDirection) return null;
     return movingLeft ? leftEdge : rightEdge;
   }
 
+  // 🔄 REPLACEMENT STARTS HERE
   function cullTree(wrap){
-    if (!wrap || wrap.dataset.gone === "1") return; // sticky this tail session
+    if (!wrap || wrap.dataset.gone === "1") return;
     wrap.dataset.gone = "1";
 
     const idx    = parseInt(wrap.dataset.idx || "0", 10);
@@ -1310,44 +1352,100 @@ s.textContent = `
     // pointer off
     gsap.set(wrap, { pointerEvents: "none" });
 
-    // --- PRE-ANIMATION flourish (very short) ---
-    // 1) tiny chainsaw jitter
-    // 2) micro tip *away from the tractor nose* (feels reactive)
-    // then your original lift/fade
-    const dirAway = (movingLeft === true) ? +1 : -1; // fall/tilt away from nose
-    gsap.set(wrap, { transformOrigin: "50% 100%" });
-    kids.forEach(k => gsap.set(k, { transformOrigin: "50% 100%" }));
+    // hinge at base
+    gsap.set(wrap, { transformOrigin:"50% 100%" });
+    kids.forEach(k => gsap.set(k, { transformOrigin:"50% 100%" }));
 
-    const tl = gsap.timeline();
+    const dirAway = (movingLeft === true) ? +1 : -1; // +1 = fall right, -1 = fall left
 
-    // jitter buzz (≈ 0.25s total)
-    tl.add(jitter(wrap, 6, 1.6, 0.035));
-
-    // micro tip & settle (≈ 0.22s)
-    tl.to(wrap, {
-      rotation: dirAway * 6,
-      y: -4,
-      duration: 0.14,
-      ease: "power2.out"
-    }).to(wrap, {
-      rotation: 0,
-      y: 0,
-      duration: 0.08,
-      ease: "sine.in"
+    const tl = gsap.timeline({
+      onComplete(){
+        // ensure fully invisible after the act
+        gsap.set(kids, { opacity: 0, filter: `blur(${BLUR_PX}px)` });
+      }
     });
 
-    // --- ORIGINAL lift/fade (unchanged look, just sequenced after flourish) ---
-    tl.to(wrap,  { y: -LIFT_PX, duration: DUR, ease: "power2.in" }, "+=0.02");
-    tl.to(kids,  { opacity: 0, filter:`blur(${BLUR_PX}px)`, duration: DUR, ease: "power2.in" }, "<");
-    if (shadow) tl.to(shadow, { opacity: 0, scaleY: 0.6, duration: DUR*0.9, ease: "power2.in" }, "<+0.02");
+    // 1) chainsaw buzz
+    tl.add(jitter(wrap, 6, 1.6, 0.035));
+
+    // 2) micro pre-tip (away from nose)
+    tl.to(wrap, {
+      rotation: dirAway * TOPPLE.tip1,
+      y: -TOPPLE.preLift,
+      duration: TOPPLE.tPre,
+      ease: "power2.out"
+    });
+
+    // 3) commit the lean (start sliding & lowering a bit)
+    tl.to(wrap, {
+      rotation: dirAway * (TOPPLE.tip1 + TOPPLE.hinge1),
+      x: `+=${dirAway * TOPPLE.xDrift1}`,
+      y: `+=${TOPPLE.drop1}`,
+      duration: TOPPLE.tLean1,
+      ease: "power2.in"
+    });
+
+    // 4) accelerate into the fall (bigger rotation + drift + drop)
+    tl.to(wrap, {
+      rotation: dirAway * TOPPLE.finalRot,
+      x: `+=${dirAway * (TOPPLE.xDrift2 - TOPPLE.xDrift1)}`,
+      y: `+=${TOPPLE.drop2 - TOPPLE.drop1}`,
+      duration: TOPPLE.tLean2,
+      ease: "power4.in"
+    }, "<");
+
+    // shadow stretches & fades during fall
+    if (shadow){
+      tl.to(shadow, {
+        opacity: 0.10,
+        scaleX: 1.2,
+        scaleY: 0.7,
+        duration: TOPPLE.tLean1 + TOPPLE.tLean2,
+        ease: "power2.inOut"
+      }, "<");
+    }
+
+    // slight blur ramp on sprites as they move fast / out of focus
+    tl.to(kids, {
+      filter: `blur(${BLUR_PX}px)`,
+      duration: TOPPLE.tLean2 * 0.8,
+      ease: "power2.in"
+    }, "<+0.05");
+
+    // 5) impact bounce (tiny)
+    tl.to(wrap, {
+      y: `+=${TOPPLE.bounceY}`,
+      rotation: `+=${dirAway * TOPPLE.bounceRot}`,
+      duration: 0.18,
+      ease: "bounce.out",
+      onStart(){
+        // dusty thump
+        if (typeof spawnDustPuff === "function") {
+          const r = TREE_RECTS[idx] || TREE_RECTS[0];
+          for (let i=0;i<2;i++) setTimeout(()=>spawnDustPuff(r), i*80);
+        }
+        // shake the sprite a hair on impact
+        gsap.fromTo(wrap, { x: `+=${dirAway*1.2}` }, { x: `-=${dirAway*1.2}`, duration: 0.08, yoyo:true, repeat:3, ease:"sine.inOut" });
+      }
+    });
+
+    // 6) leaf burst at impact
+    tl.add(() => {
+      const seg = segFromProgress(window.__currentProgress || 0);
+      for (let i=0; i<12; i++) spawnLeaf(seg);
+    }, "<");
+
+    // 7) fade out while it settles out of frame
+    tl.to(kids, { opacity: 0, duration: TOPPLE.tFade, ease: "power1.in" }, "+=0.05");
+    if (shadow) tl.to(shadow, { opacity: 0, duration: TOPPLE.tFade*0.9, ease: "power1.in" }, "<+0.05");
   }
+  // 🔄 REPLACEMENT ENDS HERE
 
   function loop(){
-    const nose = tractorNose();       // null until visible *and* direction known
+    const nose = tractorNose();
     const band = forestBandX();
 
     if (nose != null && band){
-      // arm only when the nose is within (slightly expanded) forest band
       const margin = 40;
       armed = (nose >= band.min - margin) && (nose <= band.max + margin);
 
@@ -1356,11 +1454,9 @@ s.textContent = `
           if (w.dataset.gone === "1") return;
           const base = w.querySelector(".tree, .tree-back");
           if (!base) return;
-
           const r  = base.getBoundingClientRect();
           const cx = r.left + r.width * 0.5;
 
-          // Trigger exactly when the nose passes the tree center (with a small pad)
           if (movingLeft){
             if (nose <= cx - PASS_PAD) cullTree(w);
           } else {
@@ -1369,7 +1465,6 @@ s.textContent = `
         });
       }
     }
-
     requestAnimationFrame(loop);
   }
 
@@ -1382,11 +1477,7 @@ s.textContent = `
       gsap.set(kids, { clearProps:"opacity,filter,transform" });
       if (sh) gsap.set(sh, { clearProps:"opacity,transform" });
     });
-    // reset tracker so we re-detect direction next time
-    lastEdgeX = null;
-    movingLeft = null;
-    haveDirection = false;
-    armed = false;
+    lastEdgeX = null; movingLeft = null; haveDirection = false; armed = false;
   }
 
   loop();
@@ -1394,18 +1485,21 @@ s.textContent = `
   window.addEventListener("forest-reset", resetAll);
 })();
 
+
 /* ---------- TRACTOR WASH (impulse to ground items near the tractor) ---------- */
 const TRACTOR_WASH = {
   enabled: true,
-  liftVy: -2.2,         // upward kick
-  pushVx: 1.6,          // sideways push (outward from tractor center)
-  radius: 80,          // influence radius (px) around tractor “footprint”
-  rectPad: 12,          // expand the footprint a bit so it feels generous
-  maxBoostPerFrame: 0.9 // clamp so impulses don’t explode at high FPS
+  backOnly: true,      // ← only affect points behind the tractor
+  backPad: 24,         // pixels behind the tractor center before we count it as “behind”
+  liftVy: -1.0,        // was -2.2  → lower = less vertical pop
+  pushVx: 0.9,         // was 1.6   → lower = less sideways shove
+  radius: 110,         // was 140   → tighter influence zone
+  rectPad: 10,         // was 12    → closer to the sprite
+  maxBoostPerFrame: 0.55 // was 0.9 → softer impulses per frame
 };
-
 let __tractorPrevX = null;
-let __tractorSpeed = 0; // px/frame-ish
+let __tractorSpeed = 0; // 0..30-ish
+let __tractorDirX  = 0; // -1 = moving left, +1 = moving right
 
 function tractorRectInCanvas(){
   if (!leafCanvas) return null;
@@ -1414,30 +1508,96 @@ function tractorRectInCanvas(){
 
   const cb = leafCanvas.getBoundingClientRect();
   const tb = tractor.getBoundingClientRect();
-  // Map to canvas coords
+
   let x1 = tb.left  - cb.left - TRACTOR_WASH.rectPad;
   let y1 = tb.top   - cb.top  - TRACTOR_WASH.rectPad;
   let x2 = tb.right - cb.left + TRACTOR_WASH.rectPad;
   let y2 = tb.bottom- cb.top  + TRACTOR_WASH.rectPad;
 
-  // Clamp
   x1 = Math.max(-200, x1); y1 = Math.max(-200, y1);
   x2 = Math.min(leafCanvas.width + 200, x2);
   y2 = Math.min(leafCanvas.height + 200, y2);
 
-  // simple speed estimate (x only is fine for our sideways puff)
   const cx = (x1 + x2) * 0.5;
+
   if (__tractorPrevX != null){
-    __tractorSpeed = Math.max(0, Math.min(30, Math.abs(cx - __tractorPrevX))); // clamp
+    const dx = cx - __tractorPrevX;
+    __tractorSpeed = Math.max(0, Math.min(30, Math.abs(dx)));
+    __tractorDirX  = Math.abs(dx) > 0.3 ? (dx > 0 ? +1 : -1) : __tractorDirX;
   }
   __tractorPrevX = cx;
 
-  return { x1, y1, x2, y2, cx, cy:(y1+y2)*0.5 };
+  return { x1, y1, x2, y2, cx, cy:(y1+y2)*0.5, dirX: __tractorDirX };
 }
 
+/* ---------- SMOKE (bigger, softer, varied) ---------- */
+const SMOKE = {
+  enabled: true,
+  // how many particles per plume
+  plumeCount: [8, 16],
+  // initial radius and growth per frame
+  startR: [8, 24],
+  grow: [0.08, 0.22],
+  // alpha fade per frame (lower = lasts longer)
+  fade: [0.002, 0.005],
+  // blur radius (px)
+  blur: [1.5, 3.5],
+  // initial velocity (rise + sideways drift)
+  vyUp: [-1.8, -0.7],
+  vxDrift: [-0.5, 0.5],
+  // slight curl/noise
+  curl: 0.03,
+  // color range (light gray → darker)
+  colorLo: [120, 120, 120],
+  colorHi: [190, 190, 190]
+};
+
+function randf(a,b){ return a + Math.random()*(b-a); }
+function randi(a,b){ return Math.floor(randf(a,b+1)); }
+
+function spawnSmokePlume(x, y, strength = 1){
+  if (!leafCanvas || !SMOKE.enabled) return;
+  const n = randi(
+    Math.max(4, Math.round(SMOKE.plumeCount[0] * strength)),
+    Math.max(6, Math.round(SMOKE.plumeCount[1] * strength))
+  );
+  for (let i=0;i<n;i++){
+    const t = Math.random(); // for color lerp
+    const r = [
+      Math.round(SMOKE.colorLo[0] + (SMOKE.colorHi[0]-SMOKE.colorLo[0]) * t),
+      Math.round(SMOKE.colorLo[1] + (SMOKE.colorHi[1]-SMOKE.colorLo[1]) * t),
+      Math.round(SMOKE.colorLo[2] + (SMOKE.colorHi[2]-SMOKE.colorLo[2]) * t)
+    ];
+    dust.push({
+      smoke: true,
+      x: x + randf(-6, 6),
+      y: y + randf(-4, 2),
+      r: randf(SMOKE.startR[0], SMOKE.startR[1]) * (0.7 + strength*0.6),
+      a: 0.22 + Math.random()*0.28,     // start fairly visible
+      vx: randf(SMOKE.vxDrift[0], SMOKE.vxDrift[1]) + (WIND?.x || 0)*0.4,
+      vy: randf(SMOKE.vyUp[0], SMOKE.vyUp[1]),
+      grow: randf(SMOKE.grow[0], SMOKE.grow[1]),
+      fade: randf(SMOKE.fade[0], SMOKE.fade[1]) * (0.8 + 0.7*(1-strength)),
+      blur: randf(SMOKE.blur[0], SMOKE.blur[1]),
+      color: r,
+      seed: Math.random()*Math.PI*2,
+      life: 0
+    });
+  }
+}
+
+
 function applyTractorWashToPoint(pt, rect){
-  // pt = {x,y,vx,vy, rVel?, air?}, rect = tractorRect
-  // influence strongest near the rect (footprint), fades with distance
+  // Early out if we only want the back and we know the travel direction
+  if (TRACTOR_WASH.backOnly && rect && rect.dirX){
+    const rel = pt.x - rect.cx;                 // + = right of center, - = left of center
+    const isBehind = rect.dirX > 0
+      ? (rel < -TRACTOR_WASH.backPad)           // moving right → behind is to the left
+      : (rel >  TRACTOR_WASH.backPad);          // moving left  → behind is to the right
+    if (!isBehind) return;
+  }
+
+  // Distance to the expanded footprint
   const rx = Math.max(rect.x1, Math.min(pt.x, rect.x2));
   const ry = Math.max(rect.y1, Math.min(pt.y, rect.y2));
   const dx = pt.x - rx;
@@ -1447,30 +1607,26 @@ function applyTractorWashToPoint(pt, rect){
   const R = TRACTOR_WASH.radius;
   if (d > R) return;
 
-  const t = 1 - (d / R);                // 0..1 falloff
-  const speedMul = 0.25 + 0.75*(__tractorSpeed / 30); // 0.25..1
-  const boost = Math.min(TRACTOR_WASH.maxBoostPerFrame, t * speedMul);
+  // Softer, smoother falloff + speed scaling
+  const t = 1 - (d / R);                          // 0..1
+  const speedMul = 0.25 + 0.75*(__tractorSpeed / 30);
+  const boost = Math.min(TRACTOR_WASH.maxBoostPerFrame, t * t * speedMul); // quadratic falloff
 
-  // push outward from the footprint; sideways bias by which side of center we’re on
-  const side = Math.sign((pt.x - rect.cx) || 1); // left: -1, right: +1
-  pt.vx += (TRACTOR_WASH.pushVx * side) * boost * (0.8 + Math.random()*0.4);
-  pt.vy += (TRACTOR_WASH.liftVy)          * boost * (0.8 + Math.random()*0.4);
+  // Outward push from center, reduced lift
+  const side = Math.sign((pt.x - rect.cx) || 1);
+  pt.vx += (TRACTOR_WASH.pushVx * side) * boost * (0.85 + Math.random()*0.3);
+  pt.vy += (TRACTOR_WASH.liftVy)        * boost * (0.85 + Math.random()*0.3);
 
-  // wake it into “air” behavior if it has that flag
   if ("air" in pt) pt.air = true;
+  if ("rVel" in pt) pt.rVel += (Math.random()-0.5) * 0.06 * boost;
 
-  // a little tumble
-  if ("rVel" in pt) pt.rVel += (Math.random()-0.5) * 0.08 * boost;
-
-  // occasional dust kick from the ground edge
-  if (Math.random() < 0.05 * boost){
-    dust.push({
-      x: pt.x + (Math.random()-0.5)*8,
-      y: leafCanvas.height - GROUND_RISE_PX - (Math.random()*10+6),
-      r: (Math.random()*3)+1.2, a: 0.22 + Math.random()*0.18,
-      vx: (Math.random()-0.5)*1.0, vy: 1.2 + Math.random()*1.3
-    });
+  // smokier ground plume proportional to the local boost
+  if (Math.random() < 0.12 * boost){
+    const baseY = leafCanvas.height - GROUND_RISE_PX - 4;
+    // strength scales with boost (+ tractor speed via boost)
+    spawnSmokePlume(pt.x, baseY, Math.min(1.0, boost * 2.2));
   }
+
 }
 
 /* ---------- BACKGROUND SKY (expose sun center via CSS vars) ---------- */
@@ -1698,7 +1854,17 @@ if (bg) {
     mask-composite: intersect;
   }
 
-  #bgRays .smog{ /* unchanged */ ... }
+ #bgRays .smog{
+  position:fixed; inset:0; pointer-events:none;
+  opacity:0;
+  filter: blur(1.2px);
+  background:
+    radial-gradient(120% 85% at 50% 95%,
+      rgba(70,70,70,0.00) 0%,
+      rgba(70,70,70,0.15) 45%,
+      rgba(60,60,60,0.35) 80%);
+}
+
 `;
 
     document.head.appendChild(s);
@@ -2070,6 +2236,25 @@ if (forestP < 1) {
     if (window.__tractor__ && typeof window.__tractor__.updateTail === "function"){
       window.__tractor__.updateTail(tailT);
     }
+    // --- TAIL DOOM: 0 while in forest; ramps 0→1 in the tail ---
+const doom = Math.pow(tailT, 1.15);  // gentle start, stronger near the end
+window.__tailDoom = doom;
+
+// darken tree sprites a bit in the tail (doesn't affect earlier segments)
+const treeDark = 1 - 0.26*doom;              // brightness 1 → ~0.74
+const treeSat  = 1 - 0.35*doom;              // desaturate a touch
+const treeCon  = 1 + 0.12*doom;              // small contrast lift
+gsap.set(".tree, .tree-back, .tree-stage", {
+  filter: `brightness(${treeDark}) saturate(${treeSat}) contrast(${treeCon})`
+});
+
+// nudge background systems darker/heavier in tail
+if (window.__tailgrade__) window.__tailgrade__.update(doom);
+if (window.__fog__?.boostTail) window.__fog__.boostTail(doom);
+
+// add a little ambient smoke in the tail (not only from the tractor)
+if (window.__tailsmoke__) window.__tailsmoke__.tick(doom);
+
 
     // --- local helper kept here to avoid changing your global function list ---
     function setGroundProgress(pct){
@@ -2143,6 +2328,48 @@ if (forestP < 1) {
     }
   }
 });
+(function TailGrade(){
+  let built=false, wrap, tint, vig, hue;
+  function css(){
+    if (document.getElementById("tailgrade-style")) return;
+    const s = document.createElement("style");
+    s.id="tailgrade-style";
+    s.textContent = `
+      #bg #bgTailGrade{position:fixed;inset:0;pointer-events:none;z-index:3}
+      #bgTailGrade .tint{position:fixed;inset:0;background:#0a0f16;opacity:0}
+      #bgTailGrade .hue{ position:fixed;inset:0;background:#415269;mix-blend-mode:color;opacity:0 }
+      #bgTailGrade .vig{ position:fixed;inset:0;
+        background: radial-gradient(120% 90% at 50% 55%,
+          rgba(0,0,0,0) 35%, rgba(0,0,0,0.85) 100%);
+        opacity:0
+      }`;
+    document.head.appendChild(s);
+  }
+  function build(){
+    if (built) return;
+    const bg = document.getElementById("bg"); if(!bg) return;
+    css();
+    wrap = document.createElement("div");
+    wrap.id="bgTailGrade";
+    wrap.innerHTML = `<div class="tint"></div><div class="hue"></div><div class="vig"></div>`;
+    bg.appendChild(wrap);
+    tint = wrap.querySelector(".tint");
+    hue  = wrap.querySelector(".hue");
+    vig  = wrap.querySelector(".vig");
+    built = true;
+  }
+  function update(k){ // k = 0..1
+    build(); if(!tint) return;
+    // ramp these softly; they *layer on top* of your existing grade
+    const tTint = 0.55*k;       // extra darkening
+    const tHue  = 0.30*k;       // cool cast
+    const tVig  = 0.35*k;       // vignette
+    tint.style.opacity = tTint.toFixed(3);
+    hue.style.opacity  = tHue.toFixed(3);
+    vig.style.opacity  = tVig.toFixed(3);
+  }
+  window.__tailgrade__ = { update };
+})();
 
 /* ---------- init ---------- */
 function init(){
@@ -2186,4 +2413,3 @@ if (document.readyState === "loading") {
   init();
 }
 window.addEventListener("resize", debounce(rebuildRows, 120));
-window.addEventListener("resize", sizeLeafCanvas);
