@@ -33,7 +33,7 @@
       layer.id = "tractorLayer";
       layer.setAttribute("aria-hidden","true");
       parent.appendChild(layer);
-      Object.assign(layer.style, { position:"absolute", inset:"0", pointerEvents:"none", zIndex:"60" });
+      Object.assign(layer.style, { position:"absolute", inset:"0", pointerEvents:"none"});
     }
     if (!img) {
       img = document.createElement("img");

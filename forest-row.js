@@ -90,6 +90,10 @@ function buildFixedRow(container, layout, className, limits){
   layout.forEach((cfg, i) => {
     const wrap = document.createElement("div");
     wrap.className = "tree-wrap";
+
+     wrap.dataset.idx = i;           // which tree in this row
+    wrap.dataset.row = className;   // "tree" or "tree-back"
+
     wrap.style.left = `${cfg.left}%`;
     wrap.style.setProperty("--dx", (cfg.dx ?? 0) + "px");
     wrap.style.setProperty("--y",  typeof (cfg.y ?? 0) === "string" ? cfg.y : `${cfg.y ?? 0}px`);
@@ -1215,7 +1219,174 @@ s.textContent = `
 })();
 
 
+/* ---------- TRACTOR CULL (lift each tree only as the tractor nose passes it + pre-exit animation) ---------- */
+(function TractorCull(){
+  const PASS_PAD = 8;    // trigger window around tree center
+  const LIFT_PX  = 44;   // lift height
+  const BLUR_PX  = 8;    // blur at peak
+  const DUR      = 0.50; // sec
 
+  let lastEdgeX = null;
+  let movingLeft = null;      // unknown until we measure real motion
+  let haveDirection = false;  // don’t cull until true
+  let armed = false;          // only cull when the nose is inside the forest band
+
+  // --- tiny helper: quick “chainsaw” jitter ---
+  function jitter(el, times=6, amp=1.4, dur=0.04){
+    const tl = gsap.timeline();
+    for (let i=0;i<times;i++){
+      tl.to(el, {
+        x:(Math.random()-0.5)*amp,
+        y:(Math.random()-0.5)*amp,
+        rotation:(Math.random()-0.5)*1.2,
+        duration:dur,
+        ease:"sine.inOut"
+      });
+    }
+    tl.to(el, { x:0, y:0, rotation:0, duration:dur*0.8, ease:"sine.out" });
+    return tl;
+  }
+
+  function forestBandX(){
+    const bases = [...document.querySelectorAll("#forestReveal .tree-wrap .tree, #forestReveal .tree-wrap .tree-back")];
+    if (!bases.length) return null;
+    const xs = bases.map(b => {
+      const r = b.getBoundingClientRect();
+      return r.left + r.width * 0.5; // center x
+    });
+    return { min: Math.min(...xs), max: Math.max(...xs) };
+  }
+
+  function tractorNose(){
+    const t = document.getElementById("tractor");
+    if (!t) return null;
+
+    const op = parseFloat(getComputedStyle(t).opacity || "0");
+    if (op < 0.05) return null; // not visible yet
+
+    const r = t.getBoundingClientRect();
+    const leftEdge  = r.left;
+    const rightEdge = r.right;
+
+    // Track motion to determine direction
+    const probe = (movingLeft === true) ? leftEdge
+                : (movingLeft === false) ? rightEdge
+                : (lastEdgeX == null ? leftEdge : rightEdge); // neutral: resolve next frame
+
+    if (lastEdgeX != null){
+      const dx = probe - lastEdgeX;
+      if (Math.abs(dx) > 0.5){
+        movingLeft = dx < 0;
+        haveDirection = true;
+      }
+    }
+    lastEdgeX = probe;
+
+    // Return the actual nose based on established direction (otherwise hold off)
+    if (!haveDirection) return null;
+    return movingLeft ? leftEdge : rightEdge;
+  }
+
+  function cullTree(wrap){
+    if (!wrap || wrap.dataset.gone === "1") return; // sticky this tail session
+    wrap.dataset.gone = "1";
+
+    const idx    = parseInt(wrap.dataset.idx || "0", 10);
+    const kids   = wrap.querySelectorAll(".tree, .tree-back, .tree-stage");
+    const base   = wrap.querySelector(".tree, .tree-back");
+    const shadow = wrap.querySelector(".shadow-oval");
+
+    // debris you already had
+    if (typeof spawnDustFall === "function") spawnDustFall(idx, 24);
+    const rect = TREE_RECTS[idx] || TREE_RECTS[0];
+    for (let k=0;k<3;k++) setTimeout(()=>spawnDustPuff(rect), k*80);
+
+    // pointer off
+    gsap.set(wrap, { pointerEvents: "none" });
+
+    // --- PRE-ANIMATION flourish (very short) ---
+    // 1) tiny chainsaw jitter
+    // 2) micro tip *away from the tractor nose* (feels reactive)
+    // then your original lift/fade
+    const dirAway = (movingLeft === true) ? +1 : -1; // fall/tilt away from nose
+    gsap.set(wrap, { transformOrigin: "50% 100%" });
+    kids.forEach(k => gsap.set(k, { transformOrigin: "50% 100%" }));
+
+    const tl = gsap.timeline();
+
+    // jitter buzz (≈ 0.25s total)
+    tl.add(jitter(wrap, 6, 1.6, 0.035));
+
+    // micro tip & settle (≈ 0.22s)
+    tl.to(wrap, {
+      rotation: dirAway * 6,
+      y: -4,
+      duration: 0.14,
+      ease: "power2.out"
+    }).to(wrap, {
+      rotation: 0,
+      y: 0,
+      duration: 0.08,
+      ease: "sine.in"
+    });
+
+    // --- ORIGINAL lift/fade (unchanged look, just sequenced after flourish) ---
+    tl.to(wrap,  { y: -LIFT_PX, duration: DUR, ease: "power2.in" }, "+=0.02");
+    tl.to(kids,  { opacity: 0, filter:`blur(${BLUR_PX}px)`, duration: DUR, ease: "power2.in" }, "<");
+    if (shadow) tl.to(shadow, { opacity: 0, scaleY: 0.6, duration: DUR*0.9, ease: "power2.in" }, "<+0.02");
+  }
+
+  function loop(){
+    const nose = tractorNose();       // null until visible *and* direction known
+    const band = forestBandX();
+
+    if (nose != null && band){
+      // arm only when the nose is within (slightly expanded) forest band
+      const margin = 40;
+      armed = (nose >= band.min - margin) && (nose <= band.max + margin);
+
+      if (armed){
+        document.querySelectorAll("#forestReveal .tree-wrap").forEach(w=>{
+          if (w.dataset.gone === "1") return;
+          const base = w.querySelector(".tree, .tree-back");
+          if (!base) return;
+
+          const r  = base.getBoundingClientRect();
+          const cx = r.left + r.width * 0.5;
+
+          // Trigger exactly when the nose passes the tree center (with a small pad)
+          if (movingLeft){
+            if (nose <= cx - PASS_PAD) cullTree(w);
+          } else {
+            if (nose >= cx + PASS_PAD) cullTree(w);
+          }
+        });
+      }
+    }
+
+    requestAnimationFrame(loop);
+  }
+
+  function resetAll(){
+    document.querySelectorAll("#forestReveal .tree-wrap").forEach(w=>{
+      w.dataset.gone = "0";
+      const kids = w.querySelectorAll(".tree, .tree-back, .tree-stage");
+      const sh   = w.querySelector(".shadow-oval");
+      gsap.set(w,    { clearProps:"x,y,rotation,scale,skew,transform,pointerEvents" });
+      gsap.set(kids, { clearProps:"opacity,filter,transform" });
+      if (sh) gsap.set(sh, { clearProps:"opacity,transform" });
+    });
+    // reset tracker so we re-detect direction next time
+    lastEdgeX = null;
+    movingLeft = null;
+    haveDirection = false;
+    armed = false;
+  }
+
+  loop();
+  window.__uncullTrees__ = resetAll;
+  window.addEventListener("forest-reset", resetAll);
+})();
 
 
 /* ---------- BACKGROUND SKY (expose sun center via CSS vars) ---------- */
@@ -1770,6 +1941,19 @@ ScrollTrigger.create({
     // expose for any other code that reads it
     window.__currentProgress = forestP;
 
+    // --- add this block just after you compute forestP ---
+window.__enteredForestOnce__ ??= true;  // init
+if (forestP < 1) {
+  if (!window.__enteredForestOnce__) {
+    // we just re-entered the forest from the tail → restore trees
+    if (window.__uncullTrees__) window.__uncullTrees__();
+    window.__enteredForestOnce__ = true;
+  }
+} else {
+  // we're in the tail
+  window.__enteredForestOnce__ = false;
+}
+
     // --- FOREST SYSTEMS (drive with forestP only) ---
     if (breathingOn && forestP > 0.001){
       pauseBreathing();
@@ -1845,6 +2029,9 @@ ScrollTrigger.create({
     if (window.__tractor__ && typeof window.__tractor__.updateTail === "function"){
       window.__tractor__.updateTail(0);
     }
+
+     window.dispatchEvent(new Event("forest-reset"));
+
   },
 
   onRefresh: () => {
