@@ -1251,6 +1251,123 @@ function update(p){
   window.__tailsmoke__ = { tick };
 })();
 
+/* ---------- CITY (reveals during the tractor tail) ---------- */
+(function City(){
+  let built = false, wrap, back, mid, near;
+
+  function css(){
+    if (document.getElementById("city-style")) return;
+    const s = document.createElement("style");
+    s.id = "city-style";
+    s.textContent = `
+      #bg #bgCity{ position:fixed; inset:0; pointer-events:none; z-index:5; }
+      #bgCity .layer{
+        position:fixed; inset:0; opacity:0; transform:translateY(30px);
+        will-change: opacity, transform, filter, background-position;
+        background-repeat: no-repeat;
+        background-position: 50% 100%;
+        background-size: cover;
+        filter: blur(2px);
+      }
+      #bgCity .back{ z-index:1; }
+      #bgCity .mid { z-index:2; }
+      #bgCity .near{ z-index:3; }
+    `;
+    document.head.appendChild(s);
+  }
+
+  function build(){
+    if (built) return;
+    const bg = document.getElementById("bg");
+    if (!bg) return;
+    css();
+
+    wrap = document.createElement("div");
+    wrap.id = "bgCity";
+    wrap.innerHTML = `
+      <div class="layer back"></div>
+      <div class="layer mid"></div>
+      <div class="layer near"></div>
+    `;
+    bg.appendChild(wrap);
+
+    back = wrap.querySelector(".back");
+    mid  = wrap.querySelector(".mid");
+    near = wrap.querySelector(".near");
+
+    // TODO: swap these placeholders for your actual city art
+    back.style.backgroundImage = 'url("images/city_back.png")';
+    mid .style.backgroundImage = 'url("images/city_mid.png")';
+    near.style.backgroundImage = 'url("images/city_near.png")';
+
+    // keep hidden initially
+    [back, mid, near].forEach(el => {
+      el.style.opacity = "0";
+      el.style.transform = "translateY(30px)";
+      el.style.filter = "blur(2px)";
+    });
+
+    built = true;
+  }
+
+  const clamp01 = v => Math.max(0, Math.min(1, v));
+  const smooth  = t => t*t*(3-2*t);
+  const L = (a,b,t)=> a+(b-a)*t;
+
+  function revealMap(k){
+    // start the reveal a little into the tail so it feels like a new “act”
+    const start = 0.08, end = 0.70; // adjust if you want earlier/later
+    const t = clamp01((k - start) / (end - start));
+    return smooth(t);
+  }
+
+  function updateTail(k){
+    if (!built) build();
+    const t = revealMap(k);
+
+    // fade & rise
+    const opB = L(0, 0.95, t);
+    const opM = L(0, 0.98, t);
+    const opN = L(0, 1.00, t);
+
+    const y  = L(30, 0, t);
+    const blurB = L(2.0, 1.2, t);
+    const blurM = L(2.0, 0.9, t);
+    const blurN = L(2.0, 0.6, t);
+
+    // tiny parallax drift as the tail continues
+    const driftX = L(0, 12, k); // px
+    const driftY = L(0, 8,  k);
+
+    if (back){
+      back.style.opacity   = opB.toFixed(3);
+      back.style.transform = `translate(${(driftX*0.4).toFixed(1)}px, ${(y+driftY*0.2).toFixed(1)}px)`;
+      back.style.filter    = `blur(${blurB.toFixed(2)}px)`;
+    }
+    if (mid){
+      mid.style.opacity   = opM.toFixed(3);
+      mid.style.transform = `translate(${(driftX*0.7).toFixed(1)}px, ${(y+driftY*0.5).toFixed(1)}px)`;
+      mid.style.filter    = `blur(${blurM.toFixed(2)}px)`;
+    }
+    if (near){
+      near.style.opacity   = opN.toFixed(3);
+      near.style.transform = `translate(${driftX.toFixed(1)}px, ${(y+driftY).toFixed(1)}px)`;
+      near.style.filter    = `blur(${blurN.toFixed(2)}px)`;
+    }
+
+    // optional: softly dim the *forest* near the end of the tail, so the city “wins”
+    const fadeForest = Math.max(0, (k - 0.65) / 0.25); // 0→1 late in tail
+    const forestDark = 1 - 0.20*fadeForest;
+    const forestSat  = 1 - 0.30*fadeForest;
+    const forestCon  = 1 + 0.08*fadeForest;
+    gsap.set(".tree, .tree-back, .tree-stage", {
+      filter: `brightness(${forestDark}) saturate(${forestSat}) contrast(${forestCon})`
+    });
+  }
+
+  // expose like your other modules
+  window.__city__ = { build, updateTail };
+})();
 
 /* ---------- TRACTOR CULL (lift each tree only as the tractor nose passes it + pre-exit animation) ---------- */
 
@@ -2236,6 +2353,34 @@ if (forestP < 1) {
     if (window.__tractor__ && typeof window.__tractor__.updateTail === "function"){
       window.__tractor__.updateTail(tailT);
     }
+
+    if (window.__city__ && typeof window.__city__.updateTail === "function"){
+  window.__city__.updateTail(tailT);
+}
+  // --- Ground STAGE 4 during the city reveal ---
+(function setGroundTail() {
+  // Match City.revealMap(k): start a bit into the tail, finish ~70% through
+  const start = 0.08, end = 0.70;
+  const cityK = clamp(0, (tailT - start) / (end - start), 1); // 0..1 as city appears
+
+  const g3 = document.querySelector('#ground .stage3');
+  const g4 = document.querySelector('#ground .stage4');
+
+  // If stage4 doesn’t exist yet, do nothing (fails safe)
+  if (!g4) return;
+
+  // While forest is still progressing, keep stage4 hidden
+  const forestP = Math.min(self.progress / FOREST_PORTION, 1);
+  if (forestP < 1) {
+    if (g4) g4.style.opacity = "0";
+    return;
+  }
+
+  // Fade stage3 → stage4 as city appears
+  if (g3) g3.style.opacity = (1 - cityK).toFixed(3);
+  g4.style.opacity = cityK.toFixed(3);
+})();
+
     // --- TAIL DOOM: 0 while in forest; ramps 0→1 in the tail ---
 const doom = Math.pow(tailT, 1.15);  // gentle start, stronger near the end
 window.__tailDoom = doom;
@@ -2308,6 +2453,8 @@ if (window.__tailsmoke__) window.__tailsmoke__.tick(doom);
     sizeLeafCanvas();
 
     // rebuild once; then sync visuals to current forest progress
+    if (window.__city__) { window.__city__.build(); }
+
     if (window.__sky__)     { window.__sky__.build();     window.__sky__.update(window.__currentProgress || 0); }
     if (window.__sil__)      window.__sil__.build();
     if (window.__rays__)     window.__rays__.build();
@@ -2323,10 +2470,16 @@ if (window.__tailsmoke__) window.__tailsmoke__.tick(doom);
       bringToFront(document.getElementById("bgSky"));   // z:1
       bringToFront(document.getElementById("bgSil"));   // z:1 (near silhouettes)
       bringToFront(document.getElementById("bgGrade")); // z:2 (tint/vignette)
+      bringToFront(document.getElementById("bgCity"));
       bringToFront(document.getElementById("bgFog"));   // z:6 (fog layers)
       bringToFront(document.getElementById("bgRays"));  // z:7 (smog = top)
     }
+    // keep stage4 hidden unless we’re in the tail reveal
+const g4 = document.querySelector('#ground .stage4');
+if (g4) g4.style.opacity = "0";
+
   }
+  
 });
 (function TailGrade(){
   let built=false, wrap, tint, vig, hue;
@@ -2379,7 +2532,7 @@ function init(){
   setStageProgress(0);
   sizeLeafCanvas();
   if (leafCanvas) requestAnimationFrame(leafLoop);
-
+if (window.__city__) { window.__city__.build(); window.__city__.updateTail(0); }
   if (window.__sky__)   { window.__sky__.build();   window.__sky__.update(0); }
   if (window.__sil__)   { window.__sil__.build();   window.__sil__.update(0); }
   if (window.__rays__)  { window.__rays__.build();  window.__rays__.update(0); }
@@ -2398,8 +2551,14 @@ bringToFront(document.getElementById("bgRainbow"));
     bringToFront(document.getElementById("bgSil"));
     bringToFront(document.getElementById("bgRays"));
     bringToFront(document.getElementById("bgGrade"));
+    bringToFront(document.getElementById("bgCity")); 
     bringToFront(document.getElementById("bgFog"));
   }
+
+  // stage4 starts hidden on initial load
+const g4init = document.querySelector('#ground .stage4');
+if (g4init) g4init.style.opacity = "0";
+
 }
 
 /* debounce */

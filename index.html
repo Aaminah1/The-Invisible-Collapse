@@ -20,6 +20,7 @@
   <link rel="stylesheet" href="scene1.css" />
   <link rel="stylesheet" href="forest-row.css" />
    <link rel="stylesheet" href="fliers.css" />
+    <link rel="stylesheet" href="city-reveal.css" />
 </head>
 <body>
 <button id="micWindBtn" style="
@@ -60,6 +61,12 @@
 <div id="tractorLayer" aria-hidden="true">
   <img id="tractor" src="images/tractor.png" alt="" />
 </div>
+<!-- forest scene ends above -->
+<section id="cityReveal" class="scene">
+  <!-- temporary visual so we can see the handoff working -->
+  <div id="cityBackdrop"></div>
+</section>
+
 
 
 <div id="ground">
@@ -68,6 +75,7 @@
   <img class="g stage2" src="images/ground_stage2.png" alt="" style="opacity:0">
   <img class="g stage3" src="images/ground_stage3.png" alt="" style="opacity:0">
   <img class="g stage4" src="images/ground_stage4.png" alt="" style="opacity:0"> 
+    <img class="g stage4" src="images/ground_stage5.png" alt="" style="opacity:0"> 
 </div>
 
   
@@ -85,6 +93,7 @@
 <script src="tractor.js"></script>
 <script src="mic-wind.js"></script>
   <script src="scene1.js"></script>
+    <script src="city-reveal.js"></script>
   <script src="bg.js"></script>
 </body>
 </html>
