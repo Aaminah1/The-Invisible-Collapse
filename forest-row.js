@@ -363,7 +363,7 @@ const rand = (a,b)=>a + Math.random()*(b-a);
 let falling = [], settled = [];
 
 /* ---------- dust pool (includes smoke) ---------- */
-const DUST_MAX = 600; // cap; tune 400–800 to taste
+const DUST_MAX = 400; // cap; tune 400–800 to taste
 let dust = [];
 let dustHead = 0;
 
@@ -722,14 +722,24 @@ window.__treesMicSway__ = (amt) => {
 };
 
 /* ---------- low-res buffer just for smoke ---------- */
+const PERF = {
+  fpsTargetMs: 16.7,
+  exScaleMin: 0.28,
+  exScaleMax: 0.6,
+  exScale: 0.5,
+  bud: 1,
+  skipComposite: 0,
+  frame: 0,
+  maDt: 16.7
+};
 const exhaustCanvas = document.createElement("canvas");
 const exCtx = exhaustCanvas.getContext("2d");
-let EX_SCALE = 0.5; // render smoke at half res for speed
 
 function sizeExhaustCanvas(){
   if (!leafCanvas) return;
-  exhaustCanvas.width  = Math.max(1, Math.floor(leafCanvas.width  * EX_SCALE));
-  exhaustCanvas.height = Math.max(1, Math.floor(leafCanvas.height * EX_SCALE));
+  const s = PERF.exScale;
+  exhaustCanvas.width  = Math.max(1, Math.floor(leafCanvas.width  * s));
+  exhaustCanvas.height = Math.max(1, Math.floor(leafCanvas.height * s));
   exCtx.clearRect(0, 0, exhaustCanvas.width, exhaustCanvas.height);
 }
 sizeExhaustCanvas();
@@ -764,15 +774,49 @@ function discreteStage(tSec, STAGE_TIMES){
 const easeOut = t => 1 - Math.pow(1 - t, 3);
 
 
+
 function leafLoop(){
   if (!leafCanvas || !lctx) return;
 
   const now = performance.now(); // single timestamp per frame
+  // ---- auto quality (keeps 55–60fps) ----
+PERF.frame++;
+const last = (leafLoop.__lastTS || now);
+const dt = now - last;
+leafLoop.__lastTS = now;
+
+// EMA (moving average)
+PERF.maDt = PERF.maDt * 0.9 + dt * 0.1;
+
+// adjust smoke budget (0..1)
+if (PERF.maDt > 26) PERF.bud = Math.max(0.15, PERF.bud - 0.12);
+else                PERF.bud = Math.min(1.00, PERF.bud + 0.06);
+
+// drive SMOKE + cadence from budget
+SMOKE.master = PERF.bud;
+
+// downshift resolution and cadence under load
+const wantScale = PERF.exScaleMax - (PERF.exScaleMax - PERF.exScaleMin) * (1 - PERF.bud); // lower bud => lower res
+if (Math.abs(wantScale - PERF.exScale) > 0.02){
+  PERF.exScale = wantScale;
+  sizeExhaustCanvas();               // re-size low-res buffer on the fly
+}
+PERF.skipComposite = (PERF.bud > 0.75) ? 0 : (PERF.bud > 0.45 ? 1 : 2);
+
   lctx.clearRect(0, 0, leafCanvas.width, leafCanvas.height);
   // clear the smoke buffer once per frame too
 exCtx.clearRect(0, 0, exhaustCanvas.width, exhaustCanvas.height);
     const tractorRect = TRACTOR_WASH.enabled ? tractorRectInCanvas() : null;
-
+// puff exhaust circles from the pipe position (behind the direction of travel)
+if (tractorRect){
+  const speedK = Math.min(1, __tractorSpeed / 10);   // faster = more puffs
+  const nowMs  = now;                                // reuse frame timestamp
+  const gap    = 90 - 50 * speedK;                   // 90ms → 40ms at speed
+  if (!window.__lastTrSmoke || nowMs - window.__lastTrSmoke > gap){
+    emitTractorExhaust(tractorRect);
+    window.__lastTrSmoke = nowMs;
+  }
+}
 
   /* ---------------- settled leaves ---------------- */
   settled.forEach(p => {
@@ -1089,8 +1133,9 @@ if (p.kind === "apple" || p.kind === "flower") {
     // sprite
  // sprite (with apple crossfade if needed)
 lctx.rotate(p.rot);
-lctx.filter = `brightness(${bright}) saturate(${sat}) blur(${blur}px)`;
-lctx.globalAlpha = (p.alphaOverride !== undefined ? alpha * p.alphaOverride : alpha);
+const needFilter = (blur > 0.0001) || (sat < 0.999 || sat > 1.001) || (bright < 0.999 || bright > 1.001);
+lctx.filter = needFilter ? `brightness(${bright}) saturate(${sat}) blur(${blur}px)` : "none";
+
 
 const dw = p.w * scale, dh = p.h * scale;
 
@@ -1152,17 +1197,52 @@ for (let i=0; i<dust.length; i++){
 
   // fade
   let da = 0.003;
-  if (d.smoke){
-   // existing smoke path...
- } else if (d.shape === "chip") {
-   lctx.save();
-   lctx.translate(d.x, d.y);
-   lctx.rotate(d.r || 0);
-   lctx.globalAlpha = d.a;
-   const [cr,cg,cb] = d.color || [150,130,110];
-   lctx.fillStyle = `rgb(${cr},${cg},${cb})`;
-   lctx.fillRect(-(d.w||4)/2, -(d.h||1)/2, (d.w||4), (d.h||1));
-   lctx.restore();
+   if (d.smoke){
+    // life/update
+    d.life = (d.life || 0) + 1;
+
+    // subtle curl so circles drift a bit
+    const curl = (SMOKE.curl || 0.03);
+    d.vx += Math.sin(d.seed + d.life * 0.06) * curl * 0.6;
+    d.vy += Math.cos(d.seed * 1.3 + d.life * 0.05) * curl * 0.4;
+
+    // gentle rise
+    d.vy += -0.01;
+
+    // growth + fade tailored for round puffs
+    if (d.grow) d.r += d.grow;
+    d.a -= (d.fade || 0.003);
+    if (d.a <= 0) { d.a = 0; continue; }
+
+    // draw the circle into the low-res exhaust buffer (exhaustCanvas)
+   const sx = d.x * PERF.exScale;
+const sy = d.y * PERF.exScale;
+const rr = Math.max(1, d.r * PERF.exScale);
+
+    exCtx.save();
+    exCtx.globalAlpha = d.a;
+exCtx.fillStyle = `rgba(${d.color[0]},${d.color[1]},${d.color[2]},1)`;
+exCtx.beginPath();
+exCtx.arc(sx, sy, rr, 0, Math.PI*2);
+exCtx.fill();
+    exCtx.globalCompositeOperation = "lighter"; // additive-ish for fluffy glow
+    exCtx.globalAlpha = d.a;
+exCtx.filter = `blur(${((d.blur || 2) * (PERF?.exScale ?? 0.5)).toFixed(2)}px)`;    exCtx.fillStyle = `rgba(${d.color[0]},${d.color[1]},${d.color[2]},1)`;
+    exCtx.beginPath();
+    exCtx.arc(sx, sy, rr, 0, Math.PI*2);
+    exCtx.fill();
+    exCtx.restore();
+
+    continue;
+  } else if (d.shape === "chip") {
+
+   if (PERF.frame % (PERF.skipComposite + 1) === 0){
+  lctx.save();
+  lctx.imageSmoothingEnabled = true;
+  lctx.globalAlpha = 1;
+  lctx.drawImage(exhaustCanvas, 0, 0, leafCanvas.width, leafCanvas.height);
+  lctx.restore();
+}
  } else {
    // default round speck
    lctx.beginPath();
@@ -1964,24 +2044,17 @@ function tractorRectInCanvas(){
 /* ---------- SMOKE (bigger, softer, varied) ---------- */
 const SMOKE = {
   enabled: true,
-    master: 1,  
-  // how many particles per plume
-  plumeCount: [8, 16],
-  // initial radius and growth per frame
-  startR: [8, 24],
-  grow: [0.08, 0.22],
-  // alpha fade per frame (lower = lasts longer)
-  fade: [0.002, 0.005],
-  // blur radius (px)
-  blur: [1.5, 3.5],
-  // initial velocity (rise + sideways drift)
-  vyUp: [-1.8, -0.7],
-  vxDrift: [-0.5, 0.5],
-  // slight curl/noise
+  master: 1,
+  plumeCount: [6, 12],     // fewer, chunkier puffs
+  startR: [14, 30],        // larger initial circles
+  grow: [0.05, 0.10],      // slower growth → stays circular longer
+  fade: [0.0016, 0.0032],  // lingers a bit
+  blur: [1.8, 3.2],
+  vyUp: [-1.4, -0.6],
+  vxDrift: [-0.4, 0.4],
   curl: 0.03,
-  // color range (light gray → darker)
-  colorLo: [120, 120, 120],
-  colorHi: [190, 190, 190]
+  colorLo: [110,110,110],
+  colorHi: [180,180,180]
 };
 
 function randf(a,b){ return a + Math.random()*(b-a); }
