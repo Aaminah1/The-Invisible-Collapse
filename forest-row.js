@@ -454,55 +454,58 @@ function spawnDustFallAt(treeIdx, clientX, clientY, count = 36){
   const rect = TREE_RECTS[treeIdx] || TREE_RECTS[0];
   const cb   = leafCanvas.getBoundingClientRect();
 
-  // Map click to canvas coords
+  // Map click to canvas coords then clamp inside the canopy band (for X only)
   let x = clientX - cb.left;
-  let y = clientY - cb.top;
-
-  // Clamp inside the canopy band for that tree
   x = clamp(rect.x1, x, rect.x2);
-  y = clamp(rect.y1, y, rect.y2);
+
+  // 🔼 spawn ABOVE the canopy band
+  const canopyTop = Math.min(rect.y1, rect.y2);
+  const y = Math.max(10, canopyTop - rand(DUST_SPAWN_LIFT[0], DUST_SPAWN_LIFT[1]));
 
   for (let k = 0; k < count; k++){
-    const r = Math.round(rand(120, 165));
-    const g = Math.round(rand(110, 140));
-    const b = Math.round(rand(95,  120));
+    const r = Math.round(rand(120,165));
+    const g = Math.round(rand(110,140));
+    const b = Math.round(rand(95,120));
     const jitterX = rand(-8, 8);
     const jitterY = rand(-6, 6);
 
     addDust({
       x: x + jitterX,
-      y: y + jitterY,
+      y: y + jitterY,                  // ⬅️ start high
       r: rand(1, 3),
       a: rand(0.35, 0.60),
       vx: rand(-0.25, 0.25),
-      vy: rand(0.60, 1.60),
+      vy: rand(0.60, 1.60),            // gentle fall
       color: [r, g, b]
     });
   }
 }
+
 
 function spawnDustFall(treeIdx, count = 36){
   if (!leafCanvas || !TREE_RECTS.length) return;
   const rect = TREE_RECTS[treeIdx] || TREE_RECTS[0];
 
+  const canopyTop = Math.min(rect.y1, rect.y2);
+  const y = Math.max(10, canopyTop - rand(DUST_SPAWN_LIFT[0], DUST_SPAWN_LIFT[1]));
+
   for (let k = 0; k < count; k++){
-    // earthy browns/greys with slight variation
-    const r = Math.round(rand(120, 165));
-    const g = Math.round(rand(110, 140));
-    const b = Math.round(rand(95,  120));
+    const r = Math.round(rand(120,165));
+    const g = Math.round(rand(110,140));
+    const b = Math.round(rand(95,120));
 
     addDust({
-      // start around the canopy (using your cached rect band)
       x: rand(rect.x1, rect.x2),
-      y: rand(rect.y1, rect.y2),
+      y: y + rand(-6, 6),              // ⬅️ start high
       r: rand(1, 3),
       a: rand(0.35, 0.60),
       vx: rand(-0.25, 0.25),
-      vy: rand(0.60, 1.60), // gentle fall
+      vy: rand(0.60, 1.60),            // gentle fall
       color: [r, g, b]
     });
   }
 }
+
 
 /* ---------- PICKUPS (apple/flower/twig) ---------- */
 const PICKUP_SRC = {
@@ -670,6 +673,8 @@ function shakeTree(wrap){
       ease: "sine.inOut", transformOrigin: "bottom center" }
   );
 }
+// how much higher (in px) to spawn "falling" dust above the canopy
+const DUST_SPAWN_LIFT = [120, 220]; // tweak to taste
 
 function attachTreeClicks(){
   document.querySelectorAll("#forestReveal .tree-wrap").forEach((w, i)=>{
