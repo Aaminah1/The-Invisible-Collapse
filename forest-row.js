@@ -84,8 +84,8 @@ function spawnTwigBurstAtTree(treeIdx, count = 4){
     const p = pickups[ pickups.length - 1 ];
     if (p && p.kind === "twig"){
   // wider lateral spread + immediate downward bias
-  p.vx   += (Math.random()-0.5) * 3.2;
-  p.vy   += 1.4 + Math.random()*0.6;   // ⬇️ go down, not up
+ p.vx   += (Math.random()-0.5) * 4.0;
+  p.vy   += 2.2 + Math.random()*0.8;   // ⬇️ clear the canopy quickly
   p.rVel += (Math.random()-0.5) * 0.10;
 }
 
@@ -192,8 +192,15 @@ function rebuildRows(){
   gsap.set("#treeRowBack", { y: 0 });
 
   cacheTreeRects();          // leaves/pickups spawn bands
-  ScrollTrigger.refresh();   // recalc after layout changes
-}
+  attachTreeClicks();        // ⬅️ make clicks live again
+  ScrollTrigger.refresh();   
+}window.addEventListener("DOMContentLoaded", () => {
+  sizeLeafCanvas();
+  cacheTreeRects();
+  rebuildRows();                  // calls attachTreeClicks()
+  requestAnimationFrame(leafLoop);
+});
+
 
 
 function leavesAllowedForProgress(p){
@@ -537,13 +544,11 @@ const PICKUP_PHYS = {
             cursorR:130, cursorF:1.6,  throwMul:1.2, rollCouple:0.0006, rotClamp:0.10,
             rotDampAir:0.98,  rotDampGround:0.94, grabK:0.18, grabDmp:0.86, rotInertia:0.9 },
  twig: {
-  airDrag: 0.985,   // was 0.968 (less drag → keeps speed)
-  termVy:  4.2,     // was 3.0  (higher terminal speed)
-  wind:    0.35,
+  airDrag: 0.972, termVy: 6.0, wind: 0.28,
   bounce:  0.18,
   friction:0.86,
   cursorR: 100, cursorF: 1.0,  throwMul: 1.0,
-  rollCouple: 0.0010, rotClamp: 0.08,
+rollCouple: 0.0008, rotClamp: 0.10,
   rotDampAir: 0.982, rotDampGround: 0.92,
   grabK: 0.12, grabDmp: 0.84, rotInertia: 1.6
 }
@@ -563,9 +568,8 @@ function spawnPickup(kind, treeIdx, clickClientX){
 
   const clickX = (clickClientX - cb.left);
   const span   = Math.max(1, rect.x2 - rect.x1);
-  let frac     = (clickX - rect.y1) / span; // 0..1
-  frac = clamp(0.10, isFinite(frac) ? frac : 0.5, 0.90);
-
+let frac     = (clickX - rect.x1) / span; // 0..1   frac = clamp(0.10, isFinite(frac) ? frac : 0.5, 0.90);
+frac = clamp(0.10, Number.isFinite(frac) ? frac : 0.5, 0.90);
   const x = rect.x1 + frac*span + (span*0.08)*(Math.random()-0.5);
 
   // 🔼 spawn ABOVE the canopy band
@@ -613,7 +617,7 @@ function spawnPickup(kind, treeIdx, clickClientX){
 
   // keep your existing twig nudge so they don’t hover
   if (kind === "twig") {
-    pickups[pickups.length - 1].vy = 1.2;
+   pickups[pickups.length - 1].vy = 2.0;
   }
 }
 
@@ -678,36 +682,30 @@ const DUST_SPAWN_LIFT = [120, 220]; // tweak to taste
 
 function attachTreeClicks(){
   document.querySelectorAll("#forestReveal .tree-wrap").forEach((w, i)=>{
+    if (w.__clickBound) return;      // ⬅️ guard
+    w.__clickBound = true;
     w.style.cursor = "pointer";
     w.addEventListener("click", (ev)=>{
       ev.stopPropagation();
       const p   = window.__currentProgress || 0;
-      const seg = segFromProgress(p); // 0 full, 1 mid1, 2 mid2
+      const seg = segFromProgress(p);
 
-    if (p > 0.985){
-  shakeTree(w);
-
-  // Dust burst from where the user clicked
-  spawnDustFallAt(i, ev.clientX, ev.clientY, 42);
-
-  // Extra subtle ground puffs
-  const r = TREE_RECTS[i] || TREE_RECTS[0];
-  for (let k = 0; k < 3; k++){
-    setTimeout(() => spawnDustPuff(r), k * 90);
-  }
-  return;
-}
-
+      if (p > 0.985){
+        shakeTree(w);
+        spawnDustFallAt(i, ev.clientX, ev.clientY, 42);
+        const r = TREE_RECTS[i] || TREE_RECTS[0];
+        for (let k=0; k<3; k++) setTimeout(()=>spawnDustPuff(r), k*90);
+        return;
+      }
 
       shakeTree(w);
-      // tell fliers which canopy was disturbed
-window.dispatchEvent(new CustomEvent("tree-shake", { detail: { idx: i, rect: TREE_RECTS[i] } }));
-
+      window.dispatchEvent(new CustomEvent("tree-shake", { detail: { idx: i, rect: TREE_RECTS[i] } }));
       const kind = itemForSeg(seg);
       spawnPickup(kind, i, ev.clientX);
     }, {passive:true});
   });
 }
+
 
 const G = 0.25, FRICTION = 0.88, ROT_F = 0.97, BOUNCE = 0.3;
 const WIND = { x: 0 };    // shared gust
@@ -923,6 +921,25 @@ if (tractorRect){
 
     // ground collision
     if (p.y > ground) {
+      // inside pickups.forEach(p => { ... ground collision for twigs ... })
+if (p.kind === "twig" && Math.abs(p.vy) > 2.2) {
+  const n = 6 + Math.floor(Math.random()*5); // 6–10 chips
+  for (let i=0;i<n;i++){
+    addDust({
+      shape: "chip",                // <-- new
+      x: p.x + rand(-8,8),
+      y: ground - 2 + rand(-2,2),
+      w: rand(3,8), h: rand(1,2),   // skinny rectangle
+      a: rand(0.35, 0.55),
+      vx: rand(-1.4, 1.4),
+      vy: rand(0.6, 1.6),
+      r: rand(0, Math.PI*2),        // rotation
+      vr: rand(-0.1, 0.1),          // spin
+      color: [120 + Math.random()*40, 95 + Math.random()*30, 70 + Math.random()*20] // woody
+    });
+  }
+}
+
       // first ground touch for apples → start decay clock
 if ((p.kind === "apple" || p.kind === "flower") && p.landedAt == null) p.landedAt = now;
 
@@ -1026,6 +1043,12 @@ if (p.kind === "apple" || p.kind === "flower") {
     /* ---- generic aging (SKIP apples so it doesn't fight the sequence) ---- */
     let sat = 1, bright = 1, blur = 0, alpha = 1, scale = 1;
   if (p.kind !== "apple" && p.kind !== "flower") {
+    if (p.kind === "twig" && ageSec > 18) {
+   // twigs fade earlier than other junk
+   const t = Math.min(1, (ageSec - 18) / 10);
+   alpha *= (1 - 0.6*t);
+   if (t >= 1) p.dead = true;
+ }
       if (ageSec > 8) {
         const t = Math.min(1, (ageSec - 8) / 10);
         sat = 1 - t * 0.35; bright = 1 - t * 0.15; scale = 1 - t * 0.02;
@@ -1129,41 +1152,28 @@ for (let i=0; i<dust.length; i++){
 
   // fade
   let da = 0.003;
-  if (d.smoke) {
-    const m = (SMOKE.master ?? 1);
-    da *= (1 + (1 - m) * 10.0);
-  }
-  d.a -= da;
-  if (d.a <= 0) continue;
-
   if (d.smoke){
-    // draw on low-res smoke buffer
-    const sx = d.x * EX_SCALE;
-    const sy = d.y * EX_SCALE;
-    const sr = Math.max(0.5, d.r * EX_SCALE);
-
-    const m = (SMOKE.master ?? 1);
-    const aMul = m * m; // stronger drop as master fades
-
-    exCtx.beginPath();
-    exCtx.arc(sx, sy, sr, 0, Math.PI * 2);
-    if (d.color){
-      exCtx.fillStyle = `rgba(${d.color[0]},${d.color[1]},${d.color[2]},${(d.a * aMul).toFixed(3)})`;
-    } else {
-      exCtx.fillStyle = `rgba(150,150,150,${(d.a * aMul).toFixed(3)})`;
-    }
-    exCtx.fill();
-  } else {
-    // non-smoke dust → draw directly to main canvas
-    lctx.beginPath();
-    lctx.arc(d.x, d.y, d.r, 0, Math.PI * 2);
-    if (d.color){
-      lctx.fillStyle = `rgba(${d.color[0]},${d.color[1]},${d.color[2]},${d.a.toFixed(3)})`;
-    } else {
-      lctx.fillStyle = `rgba(140,140,140,${d.a.toFixed(3)})`;
-    }
-    lctx.fill();
-  }
+   // existing smoke path...
+ } else if (d.shape === "chip") {
+   lctx.save();
+   lctx.translate(d.x, d.y);
+   lctx.rotate(d.r || 0);
+   lctx.globalAlpha = d.a;
+   const [cr,cg,cb] = d.color || [150,130,110];
+   lctx.fillStyle = `rgb(${cr},${cg},${cb})`;
+   lctx.fillRect(-(d.w||4)/2, -(d.h||1)/2, (d.w||4), (d.h||1));
+   lctx.restore();
+ } else {
+   // default round speck
+   lctx.beginPath();
+   lctx.arc(d.x, d.y, d.r||2, 0, Math.PI*2);
+   if (d.color){
+     lctx.fillStyle = `rgba(${d.color[0]},${d.color[1]},${d.color[2]},${d.a.toFixed(3)})`;
+   } else {
+     lctx.fillStyle = `rgba(140,140,140,${d.a.toFixed(3)})`;
+   }
+   lctx.fill();
+ }
 }
 
 // composite the low-res smoke layer once per frame
@@ -1732,11 +1742,16 @@ function emitTractorExhaust(trRect){
     return movingLeft ? leftEdge : rightEdge;
   }
 
+
+ 
+
   // 🔄 REPLACEMENT STARTS HERE
   function cullTree(wrap){
     if (!wrap || wrap.dataset.gone === "1") return;
     wrap.dataset.gone = "1";
-
+// per-tree burst guards (init here where wrap exists)
+    if (wrap.__burstEarly   == null) wrap.__burstEarly   = false;
+    if (wrap.__burstImpact  == null) wrap.__burstImpact  = false;
     const idx    = parseInt(wrap.dataset.idx || "0", 10);
     const kids   = wrap.querySelectorAll(".tree, .tree-back, .tree-stage");
     const base   = wrap.querySelector(".tree, .tree-back");
@@ -1784,10 +1799,15 @@ function emitTractorExhaust(trRect){
     });
 // early burst (twig + dust) right as the lean commits
 tl.add(() => {
-  spawnTwigBurstAtTree(idx, 6 + Math.floor(Math.random()*3)); // 6–8 twigs
-  const rect = TREE_RECTS[idx] || TREE_RECTS[0];
-  for (let i=0;i<3;i++) setTimeout(()=>spawnDustPuff(rect), i*90);
-}, "-=0.10");
+   if (!wrap.__burstEarly) {
+     wrap.__burstEarly = true;
+     spawnTwigBurstAtTree(idx, 3 + Math.floor(Math.random()*2)); // 3–4 twigs
+      const rect = TREE_RECTS[idx] || TREE_RECTS[0];
+      for (let i=0;i<3;i++) setTimeout(()=>spawnDustPuff(rect), i*90);
+   }
+ }, "-=0.10");
+
+
     // 4) accelerate into the fall (bigger rotation + drift + drop)
     tl.to(wrap, {
       rotation: dirAway * TOPPLE.finalRot,
@@ -1834,11 +1854,16 @@ tl.add(() => {
 
 
   // 6) impact burst → TWIGS + dust (no leaves)
-tl.add(() => {
-  spawnTwigBurstAtTree(idx, 5 + Math.floor(Math.random()*3)); // 5–7 twigs
-  const rect = TREE_RECTS[idx] || TREE_RECTS[0];
-  for (let i=0;i<3;i++) setTimeout(()=>spawnDustPuff(rect), i*90); // earthy puffs
-}, "<");
+
+ tl.add(() => {
+   if (!wrap.__burstImpact) {
+     wrap.__burstImpact = true;
+    spawnTwigBurstAtTree(idx, 3 + Math.floor(Math.random()*2)); // 3–4 twigs
+      const rect = TREE_RECTS[idx] || TREE_RECTS[0];
+      for (let i=0;i<3;i++) setTimeout(()=>spawnDustPuff(rect), i*90);
+   }
+ }, "<");
+
 
 
     // 7) fade out while it settles out of frame
