@@ -8,6 +8,12 @@ const SRC = {
   mid2: "images/Tree-Mid2.png",
   bare: "images/Tree-Bare.png"
 };
+// how much higher (in px) to spawn above the canopy band
+const PICKUP_SPAWN_LIFT = {
+  apple:  [140, 220],
+  flower: [160, 260],
+  twig:   [120, 200]
+};
 
 /* ---------- custom apple decay sequence (must be above spawnPickup) ---------- */
 const APPLE_SEQ = [
@@ -59,6 +65,31 @@ function getSizeMult(){
               .getPropertyValue("--forestSizeMult").trim();
   const n = parseFloat(v || "1");
   return Number.isFinite(n) ? n : 1;
+}
+
+function spawnTwigBurstAtTree(treeIdx, count = 4){
+  if (!leafCanvas || !TREE_RECTS.length) return;
+  const rect = TREE_RECTS[treeIdx] || TREE_RECTS[0];
+  const span = Math.max(1, rect.x2 - rect.x1);
+  const cb   = leafCanvas.getBoundingClientRect();
+
+  for (let i=0;i<count;i++){
+    // choose a canopy x% band and convert to a fake clientX for spawnPickup
+    const frac  = 0.18 + Math.random()*0.64;       // 18%..82% across the canopy
+    const px    = rect.x1 + frac*span;
+    const clientX = cb.left + px;
+
+    spawnPickup("twig", treeIdx, clientX);
+    // give each twig a little outward impulse so they don’t overlap
+    const p = pickups[ pickups.length - 1 ];
+    if (p && p.kind === "twig"){
+  // wider lateral spread + immediate downward bias
+  p.vx   += (Math.random()-0.5) * 3.2;
+  p.vy   += 1.4 + Math.random()*0.6;   // ⬇️ go down, not up
+  p.rVel += (Math.random()-0.5) * 0.10;
+}
+
+  }
 }
 
 /* ---------- art-directed layout ---------- */
@@ -163,6 +194,15 @@ function rebuildRows(){
   cacheTreeRects();          // leaves/pickups spawn bands
   ScrollTrigger.refresh();   // recalc after layout changes
 }
+
+
+function leavesAllowedForProgress(p){
+  if (p < 2/3) return true;              // Full/Mid1/Mid2 → yes
+  const tBare = (p - 2/3) / (1/3);       // 0..1 within Bare
+  return tBare < 0.45;                   // allow first ~45% of Bare
+  // tweak 0.45 → 0.35 (less) or 0.60 (more) to taste
+}
+
 
 /* ---------- GSAP breathing ---------- */
 let breatheTL = null;
@@ -271,7 +311,8 @@ const LEAF_SRC_BY_STAGE = {
 };
 const LEAF_SPEED  = { 0: [0.5,1.1], 1: [1.0,2.0], 2: [1.8,3.0] };
 const CANOPY_X_BAND = [0.25, 0.75];
-const CANOPY_Y_BAND = [0.02, 0.20];
+const CANOPY_Y_BAND = [0.80, 0.72];
+
 const GROUND_RISE_PX = 59;
 
 const SEG_DENSITY = [140, 160, 180];
@@ -312,8 +353,21 @@ function cacheTreeRects(){
 
 const rand = (a,b)=>a + Math.random()*(b-a);
 
-let falling = [], settled = [], dust = [];
+let falling = [], settled = [];
 
+/* ---------- dust pool (includes smoke) ---------- */
+const DUST_MAX = 600; // cap; tune 400–800 to taste
+let dust = [];
+let dustHead = 0;
+
+function addDust(p){
+  if (dust.length < DUST_MAX){
+    dust.push(p);            // ✅ just add it
+  } else {
+    dust[dustHead] = p;      // ✅ overwrite in ring buffer
+    dustHead = (dustHead + 1) % DUST_MAX;
+  }
+}
 // pointer state (with velocity for throwing)
 const mouse = { x:-1, y:-1, vx:0, vy:0, lastX:-1, lastY:-1, lastT:0, down:false };
 
@@ -384,7 +438,7 @@ function spawnLeaf(stageIdx){
 
 function spawnDustPuff(rect){
   if (!leafCanvas) return;
-  dust.push({
+  addDust({
     x: rand(rect.x1, rect.x2),
     y: leafCanvas.height - GROUND_RISE_PX - rand(8, 18),
     r: rand(2,5),
@@ -415,7 +469,7 @@ function spawnDustFallAt(treeIdx, clientX, clientY, count = 36){
     const jitterX = rand(-8, 8);
     const jitterY = rand(-6, 6);
 
-    dust.push({
+    addDust({
       x: x + jitterX,
       y: y + jitterY,
       r: rand(1, 3),
@@ -437,7 +491,7 @@ function spawnDustFall(treeIdx, count = 36){
     const g = Math.round(rand(110, 140));
     const b = Math.round(rand(95,  120));
 
-    dust.push({
+    addDust({
       // start around the canopy (using your cached rect band)
       x: rand(rect.x1, rect.x2),
       y: rand(rect.y1, rect.y2),
@@ -479,9 +533,17 @@ const PICKUP_PHYS = {
   flower: { airDrag:0.975, termVy:2.2, wind:0.95, bounce:0.35, friction:0.80,
             cursorR:130, cursorF:1.6,  throwMul:1.2, rollCouple:0.0006, rotClamp:0.10,
             rotDampAir:0.98,  rotDampGround:0.94, grabK:0.18, grabDmp:0.86, rotInertia:0.9 },
-  twig:   { airDrag:0.968, termVy:3.0, wind:0.45, bounce:0.22, friction:0.84,
-            cursorR:100, cursorF:1.0,  throwMul:1.0, rollCouple:0.0010, rotClamp:0.07,
-            rotDampAir:0.982, rotDampGround:0.92, grabK:0.12, grabDmp:0.84, rotInertia:1.6 }
+ twig: {
+  airDrag: 0.985,   // was 0.968 (less drag → keeps speed)
+  termVy:  4.2,     // was 3.0  (higher terminal speed)
+  wind:    0.35,
+  bounce:  0.18,
+  friction:0.86,
+  cursorR: 100, cursorF: 1.0,  throwMul: 1.0,
+  rollCouple: 0.0010, rotClamp: 0.08,
+  rotDampAir: 0.982, rotDampGround: 0.92,
+  grabK: 0.12, grabDmp: 0.84, rotInertia: 1.6
+}
 };
 
 
@@ -498,56 +560,60 @@ function spawnPickup(kind, treeIdx, clickClientX){
 
   const clickX = (clickClientX - cb.left);
   const span   = Math.max(1, rect.x2 - rect.x1);
-  let frac     = (clickX - rect.x1) / span; // 0..1
+  let frac     = (clickX - rect.y1) / span; // 0..1
   frac = clamp(0.10, isFinite(frac) ? frac : 0.5, 0.90);
 
   const x = rect.x1 + frac*span + (span*0.08)*(Math.random()-0.5);
-  const y = rect.y1 + (rect.y2 - rect.y1)*(0.05 + Math.random()*0.10);
 
-const img = new Image();
-if (kind === "apple") {
-  img.src = APPLE_SEQ[0];
-} else if (kind === "flower") {
-  img.src = FLOWER_SEQ[0];
-} else {
-  img.src = PICKUP_SRC[kind];
-}
+  // 🔼 spawn ABOVE the canopy band
+  const canopyTop = Math.min(rect.y1, rect.y2);           // smaller y = higher on screen
+  const [liftLo, liftHi] = PICKUP_SPAWN_LIFT[kind] || [120, 200];
+  const y = Math.max(10, canopyTop - rand(liftLo, liftHi));
 
+  const img = new Image();
+  if (kind === "apple")      img.src = APPLE_SEQ[0];
+  else if (kind === "flower")img.src = FLOWER_SEQ[0];
+  else                       img.src = PICKUP_SRC[kind];
 
   const cfg = PICKUP_PRESET[kind];
   let w = cfg.baseSize[0], h = cfg.baseSize[1];
-  if (kind==="apple"){ w=h=42+Math.random()*18; }
+  if (kind==="apple"){  w=h=42+Math.random()*18; }
   if (kind==="flower"){ w=h=34+Math.random()*16; }
-  if (kind==="twig"){ w=90+Math.random()*60; h=18+Math.random()*12; }
+  if (kind==="twig"){   w=90+Math.random()*60; h=18+Math.random()*12; }
 
   const side = (frac-0.5);
-  const spin = (kind==="flower") ? (Math.random()-0.5)*0.30 + side*0.12 :
-               (kind==="apple")  ? 0 :
-                                   (Math.random()-0.5)*0.10 + side*0.05;
+  const spin =
+    (kind==="flower") ? (Math.random()-0.5)*0.30 + side*0.12 :
+    (kind==="apple")  ? 0 :
+                        (Math.random()-0.5)*0.10 + side*0.05;
 
   const ph = PICKUP_PHYS[kind];
 
   pickups.push({
     id: Math.random().toString(36).slice(2),
     kind, img, x, y, w, h,
-    vx: (side* (kind==="twig"?1.3:(kind==="apple"?1.1:0.9))) + (Math.random()-0.5)*0.6,
-    vy: 0,
+    vx: (side*(kind==="twig"?1.3:(kind==="apple"?1.1:0.9))) + (Math.random()-0.5)*0.6,
+    vy: 0,                                  // gravity will take it from here
     rot: Math.random()*Math.PI*2,
     rVel: spin,
-    termVy: ph.termVy,         // per-kind
-    dragY: ph.airDrag,         // per-kind
+    termVy: ph.termVy,
+    dragY: ph.airDrag,
     born: performance.now(),
     bruised: 0, snapped:false,
     dragging:false, dead:false,
     grabDX:0, grabDY:0,
     ph,
-   // sequence/decay bookkeeping
-  stageIdx: (kind === "apple" || kind === "flower") ? 0 : undefined,
-  landedAt: (kind === "apple" || kind === "flower") ? null : undefined,
-
+    stageIdx: (kind === "apple" || kind === "flower") ? 0 : undefined,
+    landedAt: (kind === "apple" || kind === "flower") ? null : undefined,
     alphaOverride: undefined
   });
+
+  // keep your existing twig nudge so they don’t hover
+  if (kind === "twig") {
+    pickups[pickups.length - 1].vy = 1.2;
+  }
 }
+
 
 // drag handling on the page (pick up, hold, throw)
 if (leafCanvas){
@@ -652,6 +718,25 @@ window.__treesMicSway__ = (amt) => {
   });
 };
 
+/* ---------- low-res buffer just for smoke ---------- */
+const exhaustCanvas = document.createElement("canvas");
+const exCtx = exhaustCanvas.getContext("2d");
+let EX_SCALE = 0.5; // render smoke at half res for speed
+
+function sizeExhaustCanvas(){
+  if (!leafCanvas) return;
+  exhaustCanvas.width  = Math.max(1, Math.floor(leafCanvas.width  * EX_SCALE));
+  exhaustCanvas.height = Math.max(1, Math.floor(leafCanvas.height * EX_SCALE));
+  exCtx.clearRect(0, 0, exhaustCanvas.width, exhaustCanvas.height);
+}
+sizeExhaustCanvas();
+window.addEventListener("resize", sizeExhaustCanvas);
+
+
+
+
+
+
 // smooth crossfade between apple frames
 const APPLE_XFADE = 1.5; // seconds to blend frames
 const smooth01 = t => t*t*(3 - 2*t); // smoothstep
@@ -681,6 +766,8 @@ function leafLoop(){
 
   const now = performance.now(); // single timestamp per frame
   lctx.clearRect(0, 0, leafCanvas.width, leafCanvas.height);
+  // clear the smoke buffer once per frame too
+exCtx.clearRect(0, 0, exhaustCanvas.width, exhaustCanvas.height);
     const tractorRect = TRACTOR_WASH.enabled ? tractorRectInCanvas() : null;
 
 
@@ -835,7 +922,7 @@ if (tractorRect){
 if ((p.kind === "apple" || p.kind === "flower") && p.landedAt == null) p.landedAt = now;
 
       if (Math.abs(p.vy) > 1.6) {
-        dust.push({
+       addDust({
           x: p.x, y: leafCanvas.height - ((Math.random() * 10) + 8),
           r: (Math.random() * 3) + 2, a: 0.25 + Math.random() * 0.15,
           vx: (Math.random() - 0.5) * 1.2, vy: 1.4 + Math.random() * 1.2
@@ -899,7 +986,7 @@ if (p.kind === "apple" || p.kind === "flower") {
       // a few crumble/dust bits to camouflage the cut
       const N = (p.kind === "flower") ? 10 : 6;
       for (let i = 0; i < N; i++) {
-        dust.push({
+        addDust({
           x: p.x + (Math.random() - 0.5) * p.w * 0.45,
           y: p.y + p.h * 0.40 + Math.random() * 4,
           r: (p.kind === "flower") ? rand(0.8, 1.8) : rand(1.2, 2.4),
@@ -1024,16 +1111,64 @@ if (p.kind === "apple" || p.kind === "flower") {
   });
 
   /* ---------------- dust ---------------- */
-  dust = dust.filter(d => d.a > 0);
-  dust.forEach(d => {
-    d.x += d.vx; d.y += d.vy; d.a -= 0.003;
-    lctx.beginPath(); lctx.arc(d.x, d.y, d.r, 0, Math.PI * 2);
-    const col = d.color
-      ? `rgba(${d.color[0]},${d.color[1]},${d.color[2]},${d.a})`
-      : `rgba(140,140,140,${d.a})`;
-    lctx.fillStyle = col;
+dust = dust.filter(d => d.a > 0);
+
+// physics + render
+for (let i=0; i<dust.length; i++){
+  const d = dust[i];
+
+  // integrate
+  d.x += d.vx || 0;
+  d.y += d.vy || 0;
+  if (d.grow) d.r += d.grow;
+
+  // fade
+  let da = 0.003;
+  if (d.smoke) {
+    const m = (SMOKE.master ?? 1);
+    da *= (1 + (1 - m) * 10.0);
+  }
+  d.a -= da;
+  if (d.a <= 0) continue;
+
+  if (d.smoke){
+    // draw on low-res smoke buffer
+    const sx = d.x * EX_SCALE;
+    const sy = d.y * EX_SCALE;
+    const sr = Math.max(0.5, d.r * EX_SCALE);
+
+    const m = (SMOKE.master ?? 1);
+    const aMul = m * m; // stronger drop as master fades
+
+    exCtx.beginPath();
+    exCtx.arc(sx, sy, sr, 0, Math.PI * 2);
+    if (d.color){
+      exCtx.fillStyle = `rgba(${d.color[0]},${d.color[1]},${d.color[2]},${(d.a * aMul).toFixed(3)})`;
+    } else {
+      exCtx.fillStyle = `rgba(150,150,150,${(d.a * aMul).toFixed(3)})`;
+    }
+    exCtx.fill();
+  } else {
+    // non-smoke dust → draw directly to main canvas
+    lctx.beginPath();
+    lctx.arc(d.x, d.y, d.r, 0, Math.PI * 2);
+    if (d.color){
+      lctx.fillStyle = `rgba(${d.color[0]},${d.color[1]},${d.color[2]},${d.a.toFixed(3)})`;
+    } else {
+      lctx.fillStyle = `rgba(140,140,140,${d.a.toFixed(3)})`;
+    }
     lctx.fill();
-  });
+  }
+}
+
+// composite the low-res smoke layer once per frame
+lctx.save();
+lctx.imageSmoothingEnabled = true;
+lctx.globalAlpha = 1;
+lctx.drawImage(exhaustCanvas, 0, 0, leafCanvas.width, leafCanvas.height);
+lctx.restore();
+
+
 
   requestAnimationFrame(leafLoop);
 }
@@ -1050,6 +1185,10 @@ function segFromProgress(p){
 }
 
 function updateLeavesForProgress(p){
+   if (!leavesAllowedForProgress(p)){
+    if (lastSeg !== 2) falling.length = 0;   // stop airborne leaves
+    lastSeg = 2; lastP = p; return;
+  }
   const seg = segFromProgress(p);
   const dp  = Math.abs(p - lastP);
 
@@ -1209,15 +1348,21 @@ function update(p){
     L3.style.filter = `blur(${(1.2 - 0.36*t).toFixed(2)}px) ${grime}`;
   }
 
-  // ✅ Apply tail boost *after* o1/o2/o3 exist
-  const fogMul = 1 + 0.9*tailBoost;
-  o1 *= fogMul; o2 *= fogMul; o3 *= fogMul;
+ // ✅ Apply tail boost *after* o1/o2/o3 exist
+const fogMul = 1 + 0.9*tailBoost;
+o1 *= fogMul; o2 *= fogMul; o3 *= fogMul;
 
-  // Clamp & apply
-  const c = v => Math.max(0, Math.min(0.95, v));
-  L1.style.opacity = c(o1).toFixed(3);
-  L2.style.opacity = c(o2).toFixed(3);
-  L3.style.opacity = c(o3).toFixed(3);
+// NEW: global clearing (from Step 1)
+const clearK = (window.__airClear__ || 0);   // 0..1
+const clearMul = 1 - 0.95*clearK;            // ← clear
+o1 *= clearMul; o2 *= clearMul; o3 *= clearMul;  // ← clear
+
+// Clamp & apply
+const c = v => Math.max(0, Math.min(0.95, v));
+L1.style.opacity = c(o1).toFixed(3);
+L2.style.opacity = c(o2).toFixed(3);
+L3.style.opacity = c(o3).toFixed(3);
+
 }
 
 
@@ -1229,6 +1374,8 @@ function update(p){
 (function TailSmoke(){
   let acc = 0; // frame accumulator
   function tick(doom){
+    if ((SMOKE.master ?? 1) <= 0.02) { acc = 0; return; }  // ← new
+  acc += doom * 0.06;
     // cadence: a few plumes per second as doom grows
     acc += doom * 0.06;   // called every onUpdate; scale to your frame cadence
     const need = Math.floor(acc);
@@ -1251,9 +1398,40 @@ function update(p){
   window.__tailsmoke__ = { tick };
 })();
 
-/* ---------- CITY (reveals during the tractor tail) ---------- */
+function getTractorCenterX(){
+  const t = document.getElementById("tractor");
+  if (!t) return null;
+  const op = parseFloat(getComputedStyle(t).opacity || "0");
+  if (op <= 0.05) return null;                 // treat as “not in scene” yet
+  const r = t.getBoundingClientRect();
+  return (r.left + r.right) * 0.5;             // screen-space center (px)
+}
+
+/* ---------- CITY (reveals during the tractor tail; SPRING-SMOOTH parallax when tractor is visible) ---------- */
+/* ---------- CITY (reveal stays the same; parallax via background-position-x with repeat-x) ---------- */
 (function City(){
   let built = false, wrap, back, mid, near;
+
+  // spring state (for smooth parallax target → value)
+  const S = {
+    far:  { x:0, v:0, t:0 },
+    mid:  { x:0, v:0, t:0 },
+    near: { x:0, v:0, t:0 }
+  };
+
+  // motion feel (unchanged reveal; just X amplitudes)
+  const MIN_AMP   = 12;  // base when tractor first appears
+  const AMP_NEAR  = 72;
+  const AMP_MID   = 48;
+  const AMP_FAR   = 28;
+
+  const OMEGA   = 6.0; // spring stiffness
+  const ZETA    = 1.0; // critical damping
+  const MAX_VEL = 900; // px/s cap
+  const MAX_DT  = 1/30;
+
+  let tickerOn = false;
+  let lastTS   = performance.now();
 
   function css(){
     if (document.getElementById("city-style")) return;
@@ -1262,12 +1440,15 @@ function update(p){
     s.textContent = `
       #bg #bgCity{ position:fixed; inset:0; pointer-events:none; z-index:5; }
       #bgCity .layer{
-        position:fixed; inset:0; opacity:0; transform:translateY(30px);
-        will-change: opacity, transform, filter, background-position;
-        background-repeat: no-repeat;
-        background-position: 50% 100%;
-        background-size: cover;
+        position:fixed; inset:0;
+        opacity:0;
+        /* IMPORTANT: we tile horizontally and slide the texture, not the element */
+        background-repeat: repeat-x;
+        background-position: 50% 100%; /* we'll override X in JS */
+        background-size: auto 100%;    /* keep height locked; natural width for tiling */
+        will-change: opacity, filter, transform, background-position;
         filter: blur(2px);
+        transform: translate3d(0,30px,0); /* Y is animated during reveal; no X here */
       }
       #bgCity .back{ z-index:1; }
       #bgCity .mid { z-index:2; }
@@ -1278,8 +1459,8 @@ function update(p){
 
   function build(){
     if (built) return;
-    const bg = document.getElementById("bg");
-    if (!bg) return;
+    const bg = document.getElementById("bg"); if (!bg) return;
+
     css();
 
     wrap = document.createElement("div");
@@ -1295,79 +1476,174 @@ function update(p){
     mid  = wrap.querySelector(".mid");
     near = wrap.querySelector(".near");
 
-    // TODO: swap these placeholders for your actual city art
-    back.style.backgroundImage = 'url("images/city_back.png")';
-    mid .style.backgroundImage = 'url("images/city_mid.png")';
-    near.style.backgroundImage = 'url("images/city_near.png")';
+    // your tiling art
+    back.style.backgroundImage = 'url("images/constructioncity_far.png")';
+    mid .style.backgroundImage = 'url("images/constructioncity_mid.png")';
+    near.style.backgroundImage = 'url("images/constructioncity_near.png")';
 
-    // keep hidden initially
-    [back, mid, near].forEach(el => {
+    // start hidden (reveal curve unchanged)
+    [back, mid, near].forEach(el=>{
       el.style.opacity = "0";
-      el.style.transform = "translateY(30px)";
+      el.style.transform = "translate3d(0,30px,0)";
       el.style.filter = "blur(2px)";
+      // initialize background positions
+      el.style.backgroundPosition = "50% 100%";
     });
 
     built = true;
+    startTicker();
   }
 
+  // critically-damped spring step
+  function springStep(state, target, dt){
+    const k = OMEGA*OMEGA;
+    const c = 2*ZETA*OMEGA;
+    const a = k*(target - state.x) - c*state.v;
+    state.v += a * dt;
+    if (state.v >  MAX_VEL) state.v =  MAX_VEL;
+    if (state.v < -MAX_VEL) state.v = -MAX_VEL;
+    state.x += state.v * dt;
+  }
+
+  function startTicker(){
+    if (tickerOn) return;
+    tickerOn = true;
+
+    function tick(ts){
+      const dtRaw = (ts - lastTS) / 1000;
+      lastTS = ts;
+      const dt = Math.min(MAX_DT, Math.max(1/120, dtRaw || 0));
+
+      // advance spring toward targets
+      springStep(S.far,  S.far.t,  dt);
+      springStep(S.mid,  S.mid.t,  dt);
+      springStep(S.near, S.near.t, dt);
+
+      // APPLY PARALLAX BY SLIDING THE TEXTURE, NOT THE ELEMENT
+      // (negative to match perceived transform direction)
+      if (back) back.style.backgroundPosition = `${(-S.far.x).toFixed(2)}px 100%`;
+      if (mid)  mid .style.backgroundPosition = `${(-S.mid.x).toFixed(2)}px 100%`;
+      if (near) near.style.backgroundPosition = `${(-S.near.x).toFixed(2)}px 100%`;
+
+      // Y is composed via translateY only (kept from reveal logic)
+      if (back) back.style.transform = `translate3d(0,${back.__cityY || 30}px,0)`;
+      if (mid)  mid .style.transform = `translate3d(0,${mid .__cityY || 30}px,0)`;
+      if (near) near.style.transform = `translate3d(0,${near.__cityY || 30}px,0)`;
+
+      requestAnimationFrame(tick);
+    }
+    requestAnimationFrame(tick);
+  }
+
+  function tractorCenterX(){
+    const t = document.getElementById("tractor");
+    if (!t) return null;
+    const op = parseFloat(getComputedStyle(t).opacity || "0");
+    if (op <= 0.05) return null;
+    const r = t.getBoundingClientRect();
+    return (r.left + r.right) * 0.5;
+  }
+
+function updateTail(k){
+  if (!built) build();
+  if (!back || !mid || !near) return;
+
+  // helpers
   const clamp01 = v => Math.max(0, Math.min(1, v));
   const smooth  = t => t*t*(3-2*t);
   const L = (a,b,t)=> a+(b-a)*t;
 
-  function revealMap(k){
-    // start the reveal a little into the tail so it feels like a new “act”
-    const start = 0.08, end = 0.70; // adjust if you want earlier/later
-    const t = clamp01((k - start) / (end - start));
-    return smooth(t);
-  }
+  // keep your reveal window + easing the same for OPACITY/BLUR only
+  const start = 0.00, end = 0.70;
+  const t = clamp01((k - start) / (end - start));
+  const e = smooth(t);
 
-  function updateTail(k){
-    if (!built) build();
-    const t = revealMap(k);
+  // reveal: only fade/blur — NO vertical translate
+  const opB = L(0, 0.95, e), opM = L(0, 0.98, e), opN = L(0, 1.00, e);
+  const blurB = L(2.0, 1.2, e), blurM = L(2.0, 0.9, e), blurN = L(2.0, 0.6, e);
 
-    // fade & rise
-    const opB = L(0, 0.95, t);
-    const opM = L(0, 0.98, t);
-    const opN = L(0, 1.00, t);
+  back.style.opacity = opB.toFixed(3);
+  mid .style.opacity = opM.toFixed(3);
+  near.style.opacity = opN.toFixed(3);
 
-    const y  = L(30, 0, t);
-    const blurB = L(2.0, 1.2, t);
-    const blurM = L(2.0, 0.9, t);
-    const blurN = L(2.0, 0.6, t);
+  // 🔒 lock Y to 0 the whole tail (no downwards drift)
+  back.__cityY = 0;
+  mid .__cityY = 0;
+  near.__cityY = 0;
 
-    // tiny parallax drift as the tail continues
-    const driftX = L(0, 12, k); // px
-    const driftY = L(0, 8,  k);
+  back.style.transform = `translate3d(0,0,0)`;
+  mid .style.transform = `translate3d(0,0,0)`;
+  near.style.transform = `translate3d(0,0,0)`;
 
-    if (back){
-      back.style.opacity   = opB.toFixed(3);
-      back.style.transform = `translate(${(driftX*0.4).toFixed(1)}px, ${(y+driftY*0.2).toFixed(1)}px)`;
-      back.style.filter    = `blur(${blurB.toFixed(2)}px)`;
-    }
-    if (mid){
-      mid.style.opacity   = opM.toFixed(3);
-      mid.style.transform = `translate(${(driftX*0.7).toFixed(1)}px, ${(y+driftY*0.5).toFixed(1)}px)`;
-      mid.style.filter    = `blur(${blurM.toFixed(2)}px)`;
-    }
-    if (near){
-      near.style.opacity   = opN.toFixed(3);
-      near.style.transform = `translate(${driftX.toFixed(1)}px, ${(y+driftY).toFixed(1)}px)`;
-      near.style.filter    = `blur(${blurN.toFixed(2)}px)`;
-    }
+  back.style.filter = `blur(${blurB.toFixed(2)}px)`;
+  mid .style.filter = `blur(${blurM.toFixed(2)}px)`;
+  near.style.filter = `blur(${blurN.toFixed(2)}px)`;
 
-    // optional: softly dim the *forest* near the end of the tail, so the city “wins”
-    const fadeForest = Math.max(0, (k - 0.65) / 0.25); // 0→1 late in tail
-    const forestDark = 1 - 0.20*fadeForest;
-    const forestSat  = 1 - 0.30*fadeForest;
-    const forestCon  = 1 + 0.08*fadeForest;
-    gsap.set(".tree, .tree-back, .tree-stage", {
-      filter: `brightness(${forestDark}) saturate(${forestSat}) contrast(${forestCon})`
-    });
-  }
+  // horizontal parallax targets (same as before; spring smooths it)
+  const tEl = document.getElementById("tractor");
+  const cx  = tEl && parseFloat(getComputedStyle(tEl).opacity||"0") > 0.05
+    ? ((tEl.getBoundingClientRect().left + tEl.getBoundingClientRect().right) * 0.5)
+    : null;
 
-  // expose like your other modules
+  const vpW = window.innerWidth || 1920;
+  const nx  = (cx == null) ? 0 : Math.max(-1, Math.min(1, (cx / vpW) * 2 - 1));
+
+  const MIN_AMP = 12, AMP_NEAR = 72, AMP_MID = 48, AMP_FAR = 28;
+  const base    = MIN_AMP;
+  const ampNear = base + AMP_NEAR * e;
+  const ampMid  = base + AMP_MID  * e;
+  const ampFar  = base + AMP_FAR  * e;
+
+  S.near.t = (cx == null) ? 0 : nx * ampNear;
+  S.mid .t = (cx == null) ? 0 : nx * ampMid;
+  S.far .t = (cx == null) ? 0 : nx * ampFar;
+
+  // keep your forest dim-out near end of tail
+  const fadeForest = Math.max(0, (k - 0.65) / 0.25);
+  const forestDark = 1 - 0.20*fadeForest;
+  const forestSat  = 1 - 0.30*fadeForest;
+  const forestCon  = 1 + 0.08*fadeForest;
+  gsap.set(".tree, .tree-back, .tree-stage", {
+    filter: `brightness(${forestDark}) saturate(${forestSat}) contrast(${forestCon})`
+  });
+}
+
+
   window.__city__ = { build, updateTail };
 })();
+
+// continuous exhaust tied to the tractor's exhaust pipe
+function emitTractorExhaust(trRect){
+  if (!leafCanvas || !trRect) return;
+
+  // place the plume a bit *behind and above* the tractor's center (fake pipe)
+  // dir-aware so it always appears behind the motion direction
+  const pipeOffsetX = (trRect.dirX || 1) * -54; // behind the tractor
+  const pipeOffsetY = -28;                      // slightly higher than center
+
+  const x = trRect.cx + pipeOffsetX;
+  const y = trRect.cy + pipeOffsetY;
+
+  // strength scales with speed but never goes to zero
+  const base = 0.45;                                // visible even when slow
+  const spdK = Math.min(1, __tractorSpeed / 12);    // ramps up fast
+  const strength = Math.min(1, base + spdK * 0.75);
+
+  // temporarily bias smoke darker/thicker for exhaust look
+  const prevLo = SMOKE.colorLo.slice(), prevHi = SMOKE.colorHi.slice();
+  const prevStart = SMOKE.startR.slice(), prevFade = SMOKE.fade.slice();
+
+  SMOKE.colorLo = [90, 90, 90];
+  SMOKE.colorHi = [160,160,160];
+  SMOKE.startR  = [12, 30];              // a bit larger
+  SMOKE.fade    = [0.0014, 0.0028];      // lives longer
+
+  spawnSmokePlume(x, y, strength);
+
+  // restore shared settings
+  SMOKE.colorLo = prevLo; SMOKE.colorHi = prevHi;
+  SMOKE.startR  = prevStart; SMOKE.fade  = prevFade;
+}
 
 /* ---------- TRACTOR CULL (lift each tree only as the tractor nose passes it + pre-exit animation) ---------- */
 
@@ -1501,7 +1777,12 @@ function update(p){
       duration: TOPPLE.tLean1,
       ease: "power2.in"
     });
-
+// early burst (twig + dust) right as the lean commits
+tl.add(() => {
+  spawnTwigBurstAtTree(idx, 6 + Math.floor(Math.random()*3)); // 6–8 twigs
+  const rect = TREE_RECTS[idx] || TREE_RECTS[0];
+  for (let i=0;i<3;i++) setTimeout(()=>spawnDustPuff(rect), i*90);
+}, "-=0.10");
     // 4) accelerate into the fall (bigger rotation + drift + drop)
     tl.to(wrap, {
       rotation: dirAway * TOPPLE.finalRot,
@@ -1546,11 +1827,14 @@ function update(p){
       }
     });
 
-    // 6) leaf burst at impact
-    tl.add(() => {
-      const seg = segFromProgress(window.__currentProgress || 0);
-      for (let i=0; i<12; i++) spawnLeaf(seg);
-    }, "<");
+
+  // 6) impact burst → TWIGS + dust (no leaves)
+tl.add(() => {
+  spawnTwigBurstAtTree(idx, 5 + Math.floor(Math.random()*3)); // 5–7 twigs
+  const rect = TREE_RECTS[idx] || TREE_RECTS[0];
+  for (let i=0;i<3;i++) setTimeout(()=>spawnDustPuff(rect), i*90); // earthy puffs
+}, "<");
+
 
     // 7) fade out while it settles out of frame
     tl.to(kids, { opacity: 0, duration: TOPPLE.tFade, ease: "power1.in" }, "+=0.05");
@@ -1650,6 +1934,7 @@ function tractorRectInCanvas(){
 /* ---------- SMOKE (bigger, softer, varied) ---------- */
 const SMOKE = {
   enabled: true,
+    master: 1,  
   // how many particles per plume
   plumeCount: [8, 16],
   // initial radius and growth per frame
@@ -1674,34 +1959,41 @@ function randi(a,b){ return Math.floor(randf(a,b+1)); }
 
 function spawnSmokePlume(x, y, strength = 1){
   if (!leafCanvas || !SMOKE.enabled) return;
+
+  const m = (SMOKE.master ?? 1);
+  if (m <= 0.15) return;
+  const s = Math.max(0, Math.min(1, strength)) * (m * m);
+
   const n = randi(
-    Math.max(4, Math.round(SMOKE.plumeCount[0] * strength)),
-    Math.max(6, Math.round(SMOKE.plumeCount[1] * strength))
+    Math.max(4, Math.round(SMOKE.plumeCount[0] * s)),
+    Math.max(6, Math.round(SMOKE.plumeCount[1] * s))
   );
   for (let i=0;i<n;i++){
-    const t = Math.random(); // for color lerp
+    const t = Math.random();
     const r = [
       Math.round(SMOKE.colorLo[0] + (SMOKE.colorHi[0]-SMOKE.colorLo[0]) * t),
       Math.round(SMOKE.colorLo[1] + (SMOKE.colorHi[1]-SMOKE.colorLo[1]) * t),
       Math.round(SMOKE.colorLo[2] + (SMOKE.colorHi[2]-SMOKE.colorLo[2]) * t)
     ];
-    dust.push({
+    addDust({
       smoke: true,
       x: x + randf(-6, 6),
       y: y + randf(-4, 2),
-      r: randf(SMOKE.startR[0], SMOKE.startR[1]) * (0.7 + strength*0.6),
-      a: 0.22 + Math.random()*0.28,     // start fairly visible
+      r: randf(SMOKE.startR[0], SMOKE.startR[1]) * (0.7 + s*0.6),
+      a: 0.22 + Math.random()*0.28,
       vx: randf(SMOKE.vxDrift[0], SMOKE.vxDrift[1]) + (WIND?.x || 0)*0.4,
       vy: randf(SMOKE.vyUp[0], SMOKE.vyUp[1]),
       grow: randf(SMOKE.grow[0], SMOKE.grow[1]),
-      fade: randf(SMOKE.fade[0], SMOKE.fade[1]) * (0.8 + 0.7*(1-strength)),
+      fade: randf(SMOKE.fade[0], SMOKE.fade[1]) * (1.0 + 3.0 * (1 - s)),
       blur: randf(SMOKE.blur[0], SMOKE.blur[1]),
       color: r,
       seed: Math.random()*Math.PI*2,
-      life: 0
+      life: 0,
+      exhaust: false // set true if you want to tag tractor-only plumes
     });
   }
 }
+
 
 
 function applyTractorWashToPoint(pt, rect){
@@ -1738,11 +2030,11 @@ function applyTractorWashToPoint(pt, rect){
   if ("rVel" in pt) pt.rVel += (Math.random()-0.5) * 0.06 * boost;
 
   // smokier ground plume proportional to the local boost
-  if (Math.random() < 0.12 * boost){
-    const baseY = leafCanvas.height - GROUND_RISE_PX - 4;
-    // strength scales with boost (+ tractor speed via boost)
-    spawnSmokePlume(pt.x, baseY, Math.min(1.0, boost * 2.2));
-  }
+const m = (SMOKE.master ?? 1);
+if (m > 0.02 && Math.random() < 0.12 * boost * m){
+  const baseY = leafCanvas.height - GROUND_RISE_PX - 4;
+  spawnSmokePlume(pt.x, baseY, Math.min(1.0, (boost * 2.2) * m));
+}
 
 }
 
@@ -2288,7 +2580,7 @@ function updateShadows(p){
 
 /* ---------- keep FX on top of parallax (but under trees) ---------- */
 function bringToFront(el){ if(el && el.parentNode){ el.parentNode.appendChild(el); } }
-
+window.__lastTrSmoke = 0;
 /* ---------- pinned scroll control (forest + tractor tail) ---------- */
 ScrollTrigger.create({
   trigger: "#forestReveal",
@@ -2350,6 +2642,21 @@ if (forestP < 1) {
     // --- TRACTOR TAIL (0..1 only inside the tail) ---
     // tailT = 0 while in forest; grows 0→1 only after forest is done
     const tailT = Math.max(0, Math.min(1, (p - FOREST_PORTION) / (1 - FOREST_PORTION)));
+    // Tractor exhaust: only when on-screen and actually moving
+{
+  const tr = tractorRectInCanvas(); // uses your existing helper
+  if (tr && __tractorSpeed > 0.4 && (SMOKE.master ?? 1) > 0.02 && leafCanvas) {
+    const now = performance.now();
+    if (now - window.__lastTrSmoke > 50) {       // ~20 plumes/sec max
+      const baseY   = leafCanvas.height - GROUND_RISE_PX - 4;
+      const backX   = tr.cx - (tr.dirX || 1) * 42; // a bit behind the tractor
+      const strength= Math.min(1, __tractorSpeed / 20); // faster → stronger
+      spawnSmokePlume(backX, baseY, strength);
+      window.__lastTrSmoke = now;
+    }
+  }
+}
+
     if (window.__tractor__ && typeof window.__tractor__.updateTail === "function"){
       window.__tractor__.updateTail(tailT);
     }
@@ -2381,24 +2688,47 @@ if (forestP < 1) {
   g4.style.opacity = cityK.toFixed(3);
 })();
 
-    // --- TAIL DOOM: 0 while in forest; ramps 0→1 in the tail ---
-const doom = Math.pow(tailT, 1.15);  // gentle start, stronger near the end
+// --- TAIL DOOM & SMOKE FADE ---
+// --- TAIL DOOM & SMOKE FADE (TAIL-ONLY) ---
+const doom = Math.pow(tailT, 1.0);
 window.__tailDoom = doom;
 
-// darken tree sprites a bit in the tail (doesn't affect earlier segments)
-const treeDark = 1 - 0.26*doom;              // brightness 1 → ~0.74
-const treeSat  = 1 - 0.35*doom;              // desaturate a touch
-const treeCon  = 1 + 0.12*doom;              // small contrast lift
+// fog/smoke should ONLY start fading once the tractor tail is underway
+const fadeStartTail = 0.28;   // when tractor is already on-screen
+const fadeEndTail   = 0.70;   // fully cleared late in tail
+const kTail = clamp(0, (tailT - fadeStartTail) / (fadeEndTail - fadeStartTail), 1);
+
+// no forest-phase clearing at all:
+const clearK = kTail;                // ← **TAIL ONLY**
+window.__airClear__ = clearK;        // 0..1 used by BackgroundFog.update
+
+// particle smoke follow the same factor (square for faster visual drop)
+SMOKE.master = 1 - (clearK * clearK);
+
+// hard stop any lingering smoke once basically gone
+if (SMOKE.master <= 0.01) {
+  dust = dust.filter(d => !d.smoke);
+}
+
+// keep your tail grading and fog boost, but scale by remaining haze if you like
+if (window.__tailgrade__) window.__tailgrade__.update(doom * (1 - clearK));
+if (window.__fog__?.boostTail) window.__fog__.boostTail(doom * (1 - clearK));
+
+// (leave your tree darkening the same)
+const treeDark = 1 - 0.26*doom;
+const treeSat  = 1 - 0.35*doom;
+const treeCon  = 1 + 0.12*doom;
 gsap.set(".tree, .tree-back, .tree-stage", {
   filter: `brightness(${treeDark}) saturate(${treeSat}) contrast(${treeCon})`
 });
+
+
 
 // nudge background systems darker/heavier in tail
 if (window.__tailgrade__) window.__tailgrade__.update(doom);
 if (window.__fog__?.boostTail) window.__fog__.boostTail(doom);
 
 // add a little ambient smoke in the tail (not only from the tractor)
-if (window.__tailsmoke__) window.__tailsmoke__.tick(doom);
 
 
     // --- local helper kept here to avoid changing your global function list ---
@@ -2451,6 +2781,7 @@ if (window.__tailsmoke__) window.__tailsmoke__.tick(doom);
   onRefresh: () => {
     cacheTreeRects();
     sizeLeafCanvas();
+
 
     // rebuild once; then sync visuals to current forest progress
     if (window.__city__) { window.__city__.build(); }
