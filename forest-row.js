@@ -52,11 +52,10 @@ const FLOWER_FADE_DUR    = 5;               // how long it takes to disappear
 const PICKUP_XFADE = 1.25; // sec of photometric blend per boundary
 
 // how much of the pinned span to reserve for the tractor at the very end
-const TRACTOR_TAIL = 0.22; // 12% of the pin for the tractor
+const TRACTOR_TAIL = 0.22; // 22% of the pin for the tractor
 window.__TRACTOR_TAIL = 0.22;
 // How much of the pinned span is for the FOREST transitions (0..1)
-const FOREST_PORTION = 0.65;   // ← forest completes at 84% of the pin
-
+const FOREST_PORTION = 0.65;   // forest completes at 65% of the pin
 // Give more scroll after the forest (the “tail”)
 const EXTRA_TAIL_PX = 8400;     // runway just for the tractor
 
@@ -695,52 +694,6 @@ frac = clamp(0.10, Number.isFinite(frac) ? frac : 0.5, 0.90);
 }
 
 
-// drag handling on the page (pick up, hold, throw)
-if (leafCanvas){
-  window.addEventListener("pointerdown", (e)=>{
-    const r = leafCanvas.getBoundingClientRect();
-    // only if inside the canvas rectangle
-    if (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom) return;
-    // ignore clicks on trees so their click-to-spawn still works
-    if (e.target && e.target.closest && e.target.closest(".tree-wrap")) return;
-
-    const mx = e.clientX - r.left, my = e.clientY - r.top;
-
-    // choose nearest pickup under cursor
-    let best = -1, bestD = 1e9;
-    pickups.forEach((p,i)=>{
-      const rad = Math.max(p.w, p.h)*0.5 + 18;
-      const d = Math.hypot(p.x - mx, p.y - my);
-      if (d < rad && d < bestD){ best = i; bestD = d; }
-    });
-
-    if (best >= 0){
-      const p = pickups[best];
-      dragPick.active = true; dragPick.idx = best;
-      p.dragging = true;
-      p.grabDX = p.x - mx;    // keep offset so item doesn't jump
-      p.grabDY = p.y - my;
-      mouse.down = true;
-    }
-  }, {passive:true});
-
-  const release = ()=>{
-    mouse.down = false;
-    if (dragPick.active){
-      const p = pickups[dragPick.idx];
-      if (p){
-        // throw impulse from pointer velocity (weighted)
-        const mul = 0.35 * (p.ph?.throwMul ?? 1);
-        p.vx += mouse.vx * mul;
-        p.vy += mouse.vy * mul;
-        p.dragging = false;
-      }
-    }
-    dragPick.active = false; dragPick.idx = -1;
-  };
-  window.addEventListener("pointerup", release, {passive:true});
-  window.addEventListener("pointercancel", release, {passive:true});
-}
 
 function shakeTree(wrap){
   const kids = wrap.querySelectorAll(".tree, .tree-back, .tree-stage");
@@ -2574,14 +2527,17 @@ const pulseIn = 0.9 * (1 - drop);
 rays.style.opacity      = (0.32 * raysIn).toFixed(3);
 raysPulse.style.opacity = (0.26 * pulseIn).toFixed(3);
 
-    // smog rises only in segment 2
+   // smog rises only in segment 2
     const smogIn = seg < 2 ? 0 : t;
     smog.style.opacity  = (0.14 + 0.36*smogIn).toFixed(3);
-    smog.style.transform = `translateY(${(p*18).toFixed(2)}px)`;
+    smog.style.transform = `translateY(${(p * 18).toFixed(2)}px)`;
   }
 
+  // public API
   window.__rays__ = { build, update };
 })();
+
+ 
 
 /* ---------- BACKGROUND GRADING (tint + vignette + HUE) ---------- */
 (function BackgroundGrade(){
