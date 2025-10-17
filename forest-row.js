@@ -14,7 +14,12 @@ const PICKUP_SPAWN_LIFT = {
   flower: [160, 260],
   twig:   [120, 200]
 };
-
+// --- mouse wake tuning (fast path) ---
+const MOUSE_WAKE_R   = 70;
+const MOUSE_WAKE_R2  = MOUSE_WAKE_R * MOUSE_WAKE_R;
+const MAX_SETTLED = 1600;  
+// how much higher (in px) to spawn "falling" dust above the canopy
+const DUST_SPAWN_LIFT = [120, 220]; 
 /* ---------- custom apple decay sequence (must be above spawnPickup) ---------- */
 const APPLE_SEQ = [
   "images/apple1.png", // fresh (airborne)
@@ -66,6 +71,16 @@ function getSizeMult(){
   const n = parseFloat(v || "1");
   return Number.isFinite(n) ? n : 1;
 }
+function pulseTwigsOnStageChange(intensity = 1){
+  const kSpin = 0.02 * intensity;
+  const kKick = 0.6  * intensity;
+  pickups.forEach(p=>{
+    if (p.kind !== "twig") return;
+    p.rVel += (Math.random()-0.5) * kSpin;   // tiny angular jitter
+    p.vx   += (Math.random()-0.5) * kKick;   // dry lateral scuff
+    p.vy   += -0.2 * intensity;              // little lift (optional)
+  });
+}
 
 function spawnTwigBurstAtTree(treeIdx, count = 4){
   if (!leafCanvas || !TREE_RECTS.length) return;
@@ -90,6 +105,18 @@ function spawnTwigBurstAtTree(treeIdx, count = 4){
 }
 
   }
+}
+function addGroundPatch(x, y, opt = {}){
+  addDust({
+    shape: "patch",
+    x, y,
+    w: opt.w ?? rand(38, 82),
+    h: opt.h ?? rand(18, 36),
+    a: opt.a ?? rand(0.08, 0.16),
+    rot: opt.rot ?? rand(0, Math.PI*2),
+    fade: opt.fade ?? 0.0006,            // very slow fade
+    color: opt.color ?? [95, 80, 65],    // earthy
+  });
 }
 
 /* ---------- art-directed layout ---------- */
@@ -195,13 +222,86 @@ function rebuildRows(){
   attachTreeClicks();        // ⬅️ make clicks live again
   ScrollTrigger.refresh();   
 }window.addEventListener("DOMContentLoaded", () => {
+    initLeafCanvas(); 
   sizeLeafCanvas();
   cacheTreeRects();
   rebuildRows();                  // calls attachTreeClicks()
+    setupReveal();                         
   requestAnimationFrame(leafLoop);
 });
 
+function initLeafCanvas() {
+  leafCanvas = document.getElementById("leafCanvas"); // <- your canvas id
+  if (!leafCanvas) return;
+  lctx = leafCanvas.getContext("2d", { alpha: true });
 
+  // these used to be gated by `if (leafCanvas)` — bind them now that we have it
+  leafCanvas.style.touchAction = "none";
+  leafCanvas.style.pointerEvents = "none";
+
+  window.addEventListener("pointermove", onPointerMove, { passive: true });
+  window.addEventListener("pointerleave", resetMouse,   { passive: true });
+  window.addEventListener("blur",         resetMouse,   { passive: true });
+  window.addEventListener("pointerdown",  onPointerDown, { passive: true });
+  window.addEventListener("pointerup",    release,       { passive: true });
+  window.addEventListener("pointercancel",release,       { passive: true });
+
+  sizeLeafCanvas();
+  cacheTreeRects();
+}
+
+// wire up the handlers you already wrote (lifted out of the old `if (leafCanvas)` blocks)
+function onPointerMove(e){
+  const r = leafCanvas.getBoundingClientRect();
+  const x = e.clientX - r.left, y = e.clientY - r.top;
+  const t = e.timeStamp || performance.now();
+  if (mouse.lastT){
+    const dt = Math.max(1, t - mouse.lastT);
+    mouse.vx = (x - mouse.lastX) / dt * 16.67;
+    mouse.vy = (y - mouse.lastY) / dt * 16.67;
+  }
+  mouse.x = x; mouse.y = y;
+  mouse.lastX = x; mouse.lastY = y; mouse.lastT = t;
+  window.__mouseLastMove = performance.now();
+}
+function resetMouse(){
+  mouse.x = mouse.y = -1; mouse.vx = mouse.vy = 0; mouse.down = false;
+  if (dragPick.active && pickups[dragPick.idx]) pickups[dragPick.idx].dragging = false;
+  dragPick.active = false; dragPick.idx = -1;
+}
+function onPointerDown(e){
+  const r = leafCanvas.getBoundingClientRect();
+  if (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom) return;
+  if (e.target && e.target.closest && e.target.closest(".tree-wrap")) return;
+  const mx = e.clientX - r.left, my = e.clientY - r.top;
+  let best = -1, bestD = 1e9;
+  pickups.forEach((p,i)=>{
+    const rad = Math.max(p.w, p.h)*0.5 + 18;
+    const d = Math.hypot(p.x - mx, p.y - my);
+    if (d < rad && d < bestD){ best = i; bestD = d; }
+  });
+  if (best >= 0){
+    const p = pickups[best];
+    dragPick.active = true; dragPick.idx = best;
+    p.dragging = true;
+    p.grabDX = p.x - mx;
+    p.grabDY = p.y - my;
+    mouse.down = true;
+  }
+}
+function release(){
+  mouse.down = false;
+  if (dragPick.active){
+    const p = pickups[dragPick.idx];
+    if (p){
+      const mul = 0.35 * (p.ph?.throwMul ?? 1);
+      p.vx += mouse.vx * mul;
+      p.vy += mouse.vy * mul;
+      p.dragging = false;
+    }
+  }
+  dragPick.active = false; dragPick.idx = -1;
+}
 
 function leavesAllowedForProgress(p){
   if (p < 2/3) return true;              // Full/Mid1/Mid2 → yes
@@ -325,9 +425,8 @@ const GROUND_RISE_PX = 59;
 const SEG_DENSITY = [140, 160, 180];
 const MIN_SPAWN   = [1, 2, 3];
 
-// canvas
-const leafCanvas = document.getElementById("leafCanvas");
-let  lctx = leafCanvas ? leafCanvas.getContext("2d") : null;
+let leafCanvas = null, lctx = null;
+
 
 function sizeLeafCanvas(){
   if (!leafCanvas) return;
@@ -363,7 +462,7 @@ const rand = (a,b)=>a + Math.random()*(b-a);
 let falling = [], settled = [];
 
 /* ---------- dust pool (includes smoke) ---------- */
-const DUST_MAX = 400; // cap; tune 400–800 to taste
+const DUST_MAX = 300; // cap; tune 400–800 to taste
 let dust = [];
 let dustHead = 0;
 
@@ -378,34 +477,7 @@ function addDust(p){
 // pointer state (with velocity for throwing)
 const mouse = { x:-1, y:-1, vx:0, vy:0, lastX:-1, lastY:-1, lastT:0, down:false };
 
-if (leafCanvas){
-  leafCanvas.style.touchAction = "none";
-  // Let clicks pass to trees; we’ll listen on window
-  leafCanvas.style.pointerEvents = "none";
 
-  // track pointer anywhere (trees/overlays won't block)
-  window.addEventListener("pointermove", (e)=>{
-    const r = leafCanvas.getBoundingClientRect();
-    const x = e.clientX - r.left, y = e.clientY - r.top;
-    const t = e.timeStamp || performance.now();
-
-    if (mouse.lastT){
-      const dt = Math.max(1, t - mouse.lastT);    // ms
-      mouse.vx = (x - mouse.lastX) / dt * 16.67;  // ~per 60fps frame
-      mouse.vy = (y - mouse.lastY) / dt * 16.67;
-    }
-    mouse.x = x; mouse.y = y;
-    mouse.lastX = x; mouse.lastY = y; mouse.lastT = t;
-  }, {passive:true});
-
-  function resetMouse(){
-    mouse.x = mouse.y = -1; mouse.vx = mouse.vy = 0; mouse.down = false;
-    if (dragPick.active && pickups[dragPick.idx]) pickups[dragPick.idx].dragging = false;
-    dragPick.active = false; dragPick.idx = -1;
-  }
-  window.addEventListener("pointerleave", resetMouse, {passive:true});
-  window.addEventListener("blur", resetMouse, {passive:true});
-}
 
 
 // round-robin across trees so every tree sheds
@@ -550,7 +622,8 @@ const PICKUP_PHYS = {
   cursorR: 100, cursorF: 1.0,  throwMul: 1.0,
 rollCouple: 0.0008, rotClamp: 0.10,
   rotDampAir: 0.982, rotDampGround: 0.92,
-  grabK: 0.12, grabDmp: 0.84, rotInertia: 1.6
+  grabK: 0.12, grabDmp: 0.84, rotInertia: 1.6,
+  
 }
 };
 
@@ -677,8 +750,7 @@ function shakeTree(wrap){
       ease: "sine.inOut", transformOrigin: "bottom center" }
   );
 }
-// how much higher (in px) to spawn "falling" dust above the canopy
-const DUST_SPAWN_LIFT = [120, 220]; // tweak to taste
+
 
 function attachTreeClicks(){
   document.querySelectorAll("#forestReveal .tree-wrap").forEach((w, i)=>{
@@ -751,20 +823,9 @@ window.addEventListener("resize", sizeExhaustCanvas);
 
 
 // smooth crossfade between apple frames
-const APPLE_XFADE = 1.5; // seconds to blend frames
 const smooth01 = t => t*t*(3 - 2*t); // smoothstep
 
-// returns which two frames to blend and the blend factor 0..1
-function frameStageBlend(tSec, STAGE_TIMES, XFADE = PICKUP_XFADE){
-  let a = 0;
-  while (a < STAGE_TIMES.length - 1 && tSec >= STAGE_TIMES[a + 1]) a++;
-  const b = Math.min(STAGE_TIMES.length - 1, a + 1);
-  const xfadeStart = Math.max(0, STAGE_TIMES[b] - XFADE);
-  const k = tSec >= xfadeStart
-    ? smooth01( clamp(0, (tSec - xfadeStart) / XFADE, 1) )
-    : 0;
-  return { a, b, k };
-}
+
 // stage index from tSec (no blending)
 function discreteStage(tSec, STAGE_TIMES){
   let s = 0;
@@ -774,11 +835,13 @@ function discreteStage(tSec, STAGE_TIMES){
 const easeOut = t => 1 - Math.pow(1 - t, 3);
 
 
+function mouseIsActive(now){ return (now - (window.__mouseLastMove || 0)) < 120; } // 120ms
 
 function leafLoop(){
   if (!leafCanvas || !lctx) return;
 
   const now = performance.now(); // single timestamp per frame
+   leafLoop.__wokenThisFrame = 0; 
   // ---- auto quality (keeps 55–60fps) ----
 PERF.frame++;
 const last = (leafLoop.__lastTS || now);
@@ -820,65 +883,82 @@ if (tractorRect){
 
   /* ---------------- settled leaves ---------------- */
   settled.forEach(p => {
-    const half   = p.size / 2;
-    const ground = leafCanvas.height - half - GROUND_RISE_PX;
+  const half   = p.size / 2;
+  const ground = leafCanvas.height - half - GROUND_RISE_PX;
 
-    // cursor push to wake a settled leaf
-    if (mouse.x >= 0) {
-      const dx = p.x - mouse.x, dy = p.y - mouse.y, d = Math.hypot(dx, dy);
-      if (d < 70) {
-        const f = (70 - d) / 70 * 3.0;
-        p.vx += (dx / d) * f;
-        p.vy += (dy / d) * f - 0.6;
-        p.rVel += (Math.random() - 0.5) * 0.22;
-        p.air = true;
-      }
+  // quick “near tractor?” test
+  let nearTractor = false;
+  if (tractorRect){
+    const rx = Math.max(tractorRect.x1, Math.min(p.x, tractorRect.x2));
+    const ry = Math.max(tractorRect.y1, Math.min(p.y, tractorRect.y2));
+    const dx = p.x - rx, dy = p.y - ry;
+    nearTractor = (dx*dx + dy*dy) < (TRACTOR_WASH.radius * TRACTOR_WASH.radius);
+  }
+
+  const mouseActive = mouse.x >= 0 && mouseIsActive(performance.now()) &&
+                      Math.abs(p.x - mouse.x) < 80 && Math.abs(p.y - mouse.y) < 80;
+
+  // FAST PATH: truly idle leaf → no physics, no trig, no rotate
+  if (!p.air && p.vy === 0 && p.rVel === 0 && !mouseActive && !nearTractor){
+    lctx.drawImage(p.img, p.x - half, ground - half, p.size, p.size);
+    return; // ✅
+  }
+
+  // wake by mouse (lightweight, squared distance)
+  if (mouseActive){
+    const dx = p.x - mouse.x, dy = p.y - mouse.y;
+const r2 = MOUSE_WAKE_R2;
+    const d2 = dx*dx + dy*dy;
+    if (d2 < r2){
+      const d = Math.max(1e-3, Math.sqrt(d2));
+      const f = (70 - d)/70 * 3.0;
+      p.vx += (dx/d) * f;
+      p.vy += (dy/d) * f - 0.6;
+      p.rVel += (Math.random()-0.5) * 0.22;
+      p.air = true;
     }
+  }
 
-    if (p.air) {
-      p.vy += G * 0.6;
-      p.vy *= p.dragY;
-      if (p.vy > p.termVy) p.vy = p.termVy;
+  if (p.air) {
+    p.vy += G * 0.6;
+    p.vy *= p.dragY;
+    if (p.vy > p.termVy) p.vy = p.termVy;
+    p.x += p.vx + WIND.x;
+    p.y += p.vy;
+    p.rVel *= ROT_F;
+    p.rot += p.rVel;
 
-      const wob = Math.sin(p.t * p.wob1) * p.amp1 + Math.sin(p.t * p.wob2) * p.amp2;
-      p.x += p.vx + wob * 0.02 + WIND.x;
-      p.y += p.vy;
-      p.rVel *= ROT_F;
-      p.rot += p.rVel;
-      p.t++;
-
-      if (p.y > ground) {
-        p.y = ground;
-        if (Math.abs(p.vy) > 0.4) {
-          p.vy *= -0.35; p.vx *= 0.7;
-          p.rVel += (Math.random() - 0.5) * 0.12;
-        } else {
-          p.vy = 0; p.air = false;
-          if (Math.abs(p.rVel) < 0.01) p.rVel = 0;
-        }
-      }
-    } else {
-      p.vx *= FRICTION; p.vy *= FRICTION; p.rVel *= ROT_F;
+    if (p.y > ground) {
       p.y = ground;
+      if (Math.abs(p.vy) > 0.4) {
+        p.vy *= -0.35; p.vx *= 0.7;
+        p.rVel += (Math.random() - 0.5) * 0.12;
+      } else {
+        p.vy = 0; p.air = false;
+        if (Math.abs(p.rVel) < 0.01) p.rVel = 0;
+      }
     }
+  } else {
+    // only minimal decay when resting
+    p.vx *= FRICTION; p.vy = 0; p.rVel *= ROT_F;
+    p.y = ground;
+  }
 
-    if (p.x < half) { p.x = half; p.vx *= -BOUNCE; }
-    if (p.x > leafCanvas.width - half) { p.x = leafCanvas.width - half; p.vx *= -BOUNCE; }
-    // tractor wash on ground leaves
-    if (tractorRect) applyTractorWashToPoint(p, tractorRect);
-if (tractorRect){
-  const vyBefore = p.vy;
-  applyTractorWashToPoint(p, tractorRect);
-  if (p.kind === "twig") p.vy = Math.min(p.vy, vyBefore - 0.3); // cap lift on twigs
-}
+  if (p.x < half) { p.x = half; p.vx *= -BOUNCE; }
+  if (p.x > leafCanvas.width - half) { p.x = leafCanvas.width - half; p.vx *= -BOUNCE; }
 
-    // draw
-    lctx.save();
-    lctx.translate(p.x, p.y);
-    lctx.rotate(p.rot);
+  if (tractorRect) applyTractorWashToPoint(p, tractorRect);
+
+  // draw (rotated only if needed)
+  if (p.rVel !== 0 || p.air){
+    lctx.save(); lctx.translate(p.x, p.y); lctx.rotate(p.rot);
     lctx.drawImage(p.img, -half, -half, p.size, p.size);
     lctx.restore();
-  });
+  } else {
+    lctx.drawImage(p.img, p.x - half, ground - half, p.size, p.size);
+  }
+});
+
 
   /* ---------------- falling leaves ---------------- */
   const still = [];
@@ -910,6 +990,11 @@ if (tractorRect){
       p.rVel = (Math.random() - 0.5) * 0.3;
       p.air = true;
       settled.push(p);
+           
+      if (settled.length > MAX_SETTLED) {
+        settled.splice(0, settled.length - MAX_SETTLED);
+      }
+
     }
   });
   falling = still;
@@ -931,16 +1016,25 @@ if (tractorRect){
       p.vy += (ty - p.y) * k;
       p.vx *= dmp; p.vy *= dmp;
     } else {
-      if (mouse.x >= 0) {
-        const dx = p.x - mouse.x, dy = p.y - mouse.y, d = Math.hypot(dx, dy);
-        const R = p.ph?.cursorR ?? 100;
-        if (d < R && d > 0.001) {
-          const f = (R - d) / R * (p.ph?.cursorF ?? 1.2);
-          p.vx += (dx / d) * f;
-          p.vy += (dy / d) * f - 0.10;
-          p.rVel += (Math.random() - 0.5) * 0.02;
-        }
+     if (mouse.x >= 0 && mouseIsActive(now)) {
+  const R  = p.ph?.cursorR ?? 100;
+  const R2 = R*R;
+  const dx = p.x - mouse.x;
+  if (dx > -R && dx < R) {
+    const dy = p.y - mouse.y;
+    if (dy > -R && dy < R) {
+      const d2 = dx*dx + dy*dy;
+      if (d2 < R2 && d2 > 1e-6) {
+        const d = Math.sqrt(d2);
+        const f = (R - d) / R * (p.ph?.cursorF ?? 1.2);
+        p.vx += (dx / d) * f;
+        p.vy += (dy / d) * f - 0.10;
+        p.rVel += (Math.random() - 0.5) * 0.02;
       }
+    }
+  }
+}
+
       p.vy += G * 0.7;
       p.vy *= p.dragY;
       if (p.vy > p.termVy) p.vy = p.termVy;
@@ -1234,15 +1328,19 @@ exCtx.filter = `blur(${((d.blur || 2) * (PERF?.exScale ?? 0.5)).toFixed(2)}px)`;
     exCtx.restore();
 
     continue;
-  } else if (d.shape === "chip") {
-
-   if (PERF.frame % (PERF.skipComposite + 1) === 0){
+} else if (d.shape === "chip") {
+  // draw a tiny rotated rectangle chip
   lctx.save();
-  lctx.imageSmoothingEnabled = true;
-  lctx.globalAlpha = 1;
-  lctx.drawImage(exhaustCanvas, 0, 0, leafCanvas.width, leafCanvas.height);
+  lctx.globalAlpha = d.a;
+  lctx.translate(d.x, d.y);
+  lctx.rotate(d.r || 0);
+  lctx.fillStyle = d.color
+    ? `rgba(${Math.round(d.color[0])},${Math.round(d.color[1])},${Math.round(d.color[2])},${d.a.toFixed(3)})`
+    : `rgba(120,100,80,${d.a.toFixed(3)})`;
+  const w = d.w || 4, h = d.h || 1.5;
+  lctx.fillRect(-w*0.5, -h*0.5, w, h);
   lctx.restore();
-}
+
  } else {
    // default round speck
    lctx.beginPath();
@@ -1302,6 +1400,11 @@ function updateLeavesForProgress(p){
         setTimeout(()=>spawnLeaf(seg), i*70 + ti*25);
       }
     });
+    pulseTwigsOnStageChange(seg === 2 ? 1.2 : 0.8);
+     // (optional) a hair of dust so the shake “reads”
+  const r = TREE_RECTS[ (rrIndex-1+TREE_RECTS.length)%TREE_RECTS.length ] || TREE_RECTS[0];
+  if (r) for (let i=0;i<2;i++) setTimeout(()=>spawnDustPuff(r), i*90);
+
     if (seg === 2 && lastSeg === 1){
       TREE_RECTS.forEach(r=>{
         for (let k=0; k<4; k++) setTimeout(()=>spawnDustPuff(r), k*80);
@@ -1470,7 +1573,7 @@ L3.style.opacity = c(o3).toFixed(3);
   let acc = 0; // frame accumulator
   function tick(doom){
     if ((SMOKE.master ?? 1) <= 0.02) { acc = 0; return; }  // ← new
-  acc += doom * 0.06;
+ 
     // cadence: a few plumes per second as doom grows
     acc += doom * 0.06;   // called every onUpdate; scale to your frame cadence
     const need = Math.floor(acc);
@@ -1931,6 +2034,18 @@ tl.add(() => {
         gsap.fromTo(wrap, { x: `+=${dirAway*1.2}` }, { x: `-=${dirAway*1.2}`, duration: 0.08, yoyo:true, repeat:3, ease:"sine.inOut" });
       }
     });
+tl.add(() => {
+  const r = TREE_RECTS[idx] || TREE_RECTS[0];
+  if (!r || !leafCanvas) return;
+  // drop a couple of larger stains
+  for (let i=0;i<2;i++){
+    addGroundPatch(
+      (r.x1+r.x2)/2 + rand(-40, 40),
+      leafCanvas.height - GROUND_RISE_PX + rand(-2, 2),
+      { w: rand(60,110), h: rand(24,42), a: rand(0.10,0.18) }
+    );
+  }
+}, "<+0.02");
 
 
   // 6) impact burst → TWIGS + dust (no leaves)
@@ -1982,6 +2097,8 @@ tl.add(() => {
   function resetAll(){
     document.querySelectorAll("#forestReveal .tree-wrap").forEach(w=>{
       w.dataset.gone = "0";
+        w.__burstEarly = false;
+    w.__burstImpact = false;
       const kids = w.querySelectorAll(".tree, .tree-back, .tree-stage");
       const sh   = w.querySelector(".shadow-oval");
       gsap.set(w,    { clearProps:"x,y,rotation,scale,skew,transform,pointerEvents" });
@@ -2669,6 +2786,10 @@ if (near){
 
 /* ---------- contact shadow animation ---------- */
 function updateShadows(p){
+  if (typeof updateShadows !== "function") {
+  var updateShadows = function(){};
+}
+
   const seg = segIndex(p);
   const t   = easeInOut(clamp(0, segT(p), 1));
   const stillness = p>0.85 ? (p-0.85)/0.15 : 0;
