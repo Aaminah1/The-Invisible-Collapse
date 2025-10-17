@@ -93,7 +93,7 @@ function spawnTwigBurstAtTree(treeIdx, count = 4){
     const px    = rect.x1 + frac*span;
     const clientX = cb.left + px;
 
-    spawnPickup("twig", treeIdx, clientX);
+   spawnPickup("twig", treeIdx, clientX, { force: true });
     // give each twig a little outward impulse so they don’t overlap
     const p = pickups[ pickups.length - 1 ];
     if (p && p.kind === "twig"){
@@ -589,8 +589,44 @@ function spawnDustFall(treeIdx, count = 36){
 const PICKUP_SRC = {
   apple:  "images/apple.png",
   flower: "images/flower.png",
-  twig:   "images/twig2.png"
+  twig:   "images/twig.png"
 };
+
+// -- Twig art direction -------------------------------------------------------
+// Drop a few PNGs in /images/twigs/ (transparent background). Suggested names:
+//   twig_a.png (long, thin), twig_b.png (short), twig_c.png (forked),
+//   twig_d.png (with leaves), twig_bundle.png (small bundle)
+// These are optional; code falls back gracefully if a file is missing.
+const TWIG_VARIANTS = [
+  { src:"images/twigs/twig_a.png",      w:150, h:26, weight:2.0 },
+  { src:"images/twigs/twig_b.png",      w:115, h:22, weight:1.3 },
+  { src:"images/twigs/twig_c.png",      w:130, h:26, weight:1.2 },
+  { src:"images/twigs/twig_d.png",      w:140, h:28, weight:0.9 },
+];
+const TWIG_IMGS = TWIG_VARIANTS.map(v => {
+  const img = new Image(); img.src = v.src;
+  return { ...v, img };
+});
+function pickTwigVariant(){
+  if (!TWIG_IMGS.length) return null;
+  const total = TWIG_IMGS.reduce((s,v)=>s+(v.weight||1),0);
+  let r = Math.random()*total;
+  for (const v of TWIG_IMGS){ r -= (v.weight||1); if (r<=0) return v; }
+  return TWIG_IMGS[TWIG_IMGS.length-1];
+}
+
+// Central knobs for twig behavior/quantity
+const TWIG_CONFIG = {
+  allowClickSpawn: false,         // ← no user-spawned twigs; only when trees fall
+  burstEarly:  [1, 2],            // count range during the “commit lean”
+  burstImpact: [2, 3],            // count range on ground impact
+  maxActive:   48,                // hard cap on live twigs
+  tintBright:  [0.88, 1.05],      // per-twig brightness variation
+  tintSat:     [0.85, 1.08],      // per-twig saturation variation
+};
+
+
+
 const PICKUP_PRESET = {
   apple:  { baseSize:[56,56], termVy:3.2, dragY:0.96 },
   flower: { baseSize:[44,44], termVy:2.4, dragY:0.965},
@@ -615,12 +651,12 @@ const PICKUP_PHYS = {
             cursorR:130, cursorF:1.6,  throwMul:1.2, rollCouple:0.0006, rotClamp:0.10,
             rotDampAir:0.98,  rotDampGround:0.94, grabK:0.18, grabDmp:0.86, rotInertia:0.9 },
  twig: {
-  airDrag: 0.972, termVy: 6.0, wind: 0.28,
-  bounce:  0.18,
-  friction:0.86,
+  airDrag: 0.975, termVy: 5.6, wind: 0.26,
+  bounce:  0.14,
+  friction:0.88,
   cursorR: 100, cursorF: 1.0,  throwMul: 1.0,
 rollCouple: 0.0008, rotClamp: 0.10,
-  rotDampAir: 0.982, rotDampGround: 0.92,
+  rotDampAir: 0.984, rotDampGround: 0.93,
   grabK: 0.12, grabDmp: 0.84, rotInertia: 1.6,
   
 }
@@ -632,8 +668,15 @@ let dragPick = { active:false, idx:-1 };  // dragging state
 
 function itemForSeg(seg){ return seg===0 ? "flower" : (seg===1 ? "apple" : "twig"); }
 
-function spawnPickup(kind, treeIdx, clickClientX){
+function spawnPickup(kind, treeIdx, clickClientX, opts = {}){
   if (!leafCanvas || !TREE_RECTS.length) return;
+ if (kind === "twig" && !TWIG_CONFIG.allowClickSpawn && !opts.force) return;
+
+  // live twig cap
+  if (kind === "twig"){
+    const liveTwigs = pickups.reduce((n,p)=>n + (p.kind==="twig" && !p.dead ? 1 : 0), 0);
+    if (liveTwigs >= TWIG_CONFIG.maxActive) return;
+  }
 
   const rect = TREE_RECTS[treeIdx] || TREE_RECTS[0];
   const cb   = leafCanvas.getBoundingClientRect();
@@ -649,16 +692,23 @@ frac = clamp(0.10, Number.isFinite(frac) ? frac : 0.5, 0.90);
   const [liftLo, liftHi] = PICKUP_SPAWN_LIFT[kind] || [120, 200];
   const y = Math.max(10, canopyTop - rand(liftLo, liftHi));
 
-  const img = new Image();
-  if (kind === "apple")      img.src = APPLE_SEQ[0];
-  else if (kind === "flower")img.src = FLOWER_SEQ[0];
-  else                       img.src = PICKUP_SRC[kind];
-
+  let img = new Image(), v = null;
+  if (kind === "apple")       img.src = APPLE_SEQ[0];
+  else if (kind === "flower") img.src = FLOWER_SEQ[0];
+  else {
+    // twig: pick a variant if available, otherwise fallback
+    v = pickTwigVariant();
+    img = v?.img || img;        // use preloaded img if we have one
+    if (!v) img.src = PICKUP_SRC.twig;
+  }
   const cfg = PICKUP_PRESET[kind];
   let w = cfg.baseSize[0], h = cfg.baseSize[1];
   if (kind==="apple"){  w=h=42+Math.random()*18; }
   if (kind==="flower"){ w=h=34+Math.random()*16; }
-  if (kind==="twig"){   w=90+Math.random()*60; h=18+Math.random()*12; }
+if (kind==="twig"){
+    if (v){ w = v.w; h = v.h; }
+    else { w = 100 + Math.random()*50; h = 18 + Math.random()*10; }
+ }
 
   const side = (frac-0.5);
   const spin =
@@ -682,6 +732,9 @@ frac = clamp(0.10, Number.isFinite(frac) ? frac : 0.5, 0.90);
     dragging:false, dead:false,
     grabDX:0, grabDY:0,
     ph,
+    // per-twig tint so they don’t all read the same
+    tintB: (kind==="twig") ? rand(TWIG_CONFIG.tintBright[0], TWIG_CONFIG.tintBright[1]) : 1,
+    tintS: (kind==="twig") ? rand(TWIG_CONFIG.tintSat[0],    TWIG_CONFIG.tintSat[1])    : 1,
     stageIdx: (kind === "apple" || kind === "flower") ? 0 : undefined,
     landedAt: (kind === "apple" || kind === "flower") ? null : undefined,
     alphaOverride: undefined
@@ -714,6 +767,7 @@ function attachTreeClicks(){
       ev.stopPropagation();
       const p   = window.__currentProgress || 0;
       const seg = segFromProgress(p);
+      const kind = itemForSeg(seg);
 
       if (p > 0.985){
         shakeTree(w);
@@ -725,8 +779,12 @@ function attachTreeClicks(){
 
       shakeTree(w);
       window.dispatchEvent(new CustomEvent("tree-shake", { detail: { idx: i, rect: TREE_RECTS[i] } }));
-      const kind = itemForSeg(seg);
-      spawnPickup(kind, i, ev.clientX);
+     if (kind === "twig") {
+       // Bare stage: allow twig on click only here
+       spawnPickup("twig", i, ev.clientX, { force: true });
+     } else {
+       spawnPickup(kind, i, ev.clientX);
+     }
     }, {passive:true});
   });
 }
@@ -1180,9 +1238,11 @@ if (p.kind === "apple" || p.kind === "flower") {
     // sprite
  // sprite (with apple crossfade if needed)
 lctx.rotate(p.rot);
-const needFilter = (blur > 0.0001) || (sat < 0.999 || sat > 1.001) || (bright < 0.999 || bright > 1.001);
-lctx.filter = needFilter ? `brightness(${bright}) saturate(${sat}) blur(${blur}px)` : "none";
-
+// fold in per-twig tint if present
+const bMul = (p.kind==="twig" && p.tintB) ? (bright * p.tintB) : bright;
+const sMul = (p.kind==="twig" && p.tintS) ? (sat    * p.tintS) : sat;
+const needFilter = (blur > 0.0001) || (sMul < 0.999 || sMul > 1.001) || (bMul < 0.999 || bMul > 1.001);
+lctx.filter = needFilter ? `brightness(${bMul}) saturate(${sMul}) blur(${blur}px)` : "none";
 
 const dw = p.w * scale, dh = p.h * scale;
 
@@ -1937,8 +1997,8 @@ function emitTractorExhaust(trRect){
 tl.add(() => {
    if (!wrap.__burstEarly) {
      wrap.__burstEarly = true;
-     spawnTwigBurstAtTree(idx, 3 + Math.floor(Math.random()*2)); // 3–4 twigs
-      const rect = TREE_RECTS[idx] || TREE_RECTS[0];
+const cEarly = Math.floor(rand(TWIG_CONFIG.burstEarly[0], TWIG_CONFIG.burstEarly[1] + 1));
+   spawnTwigBurstAtTree(idx, cEarly);
       for (let i=0;i<3;i++) setTimeout(()=>spawnDustPuff(rect), i*90);
    }
  }, "-=0.10");
@@ -2006,8 +2066,8 @@ tl.add(() => {
  tl.add(() => {
    if (!wrap.__burstImpact) {
      wrap.__burstImpact = true;
-    spawnTwigBurstAtTree(idx, 3 + Math.floor(Math.random()*2)); // 3–4 twigs
-      const rect = TREE_RECTS[idx] || TREE_RECTS[0];
+const cImpact = Math.floor(rand(TWIG_CONFIG.burstImpact[0], TWIG_CONFIG.burstImpact[1] + 1));
+  spawnTwigBurstAtTree(idx, cImpact);
       for (let i=0;i<3;i++) setTimeout(()=>spawnDustPuff(rect), i*90);
    }
  }, "<");
