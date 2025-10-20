@@ -1319,7 +1319,37 @@ for (let i=0; i<dust.length; i++){
     // growth + fade tailored for round puffs
     if (d.grow) d.r += d.grow;
     d.a -= (d.fade || 0.003);
-    if (d.a <= 0) { d.a = 0; continue; }
+    if (d.a <= 0) { d.a = 0; continue;
+
+} else if (d.shape === "spark") {
+      // update
+      d.vx *= 0.986;
+      d.vy = (d.vy || 0) + (d.g || 0.22);
+      d.a  = (d.a  || 0) - (d.fade || 0.05);
+      if (d.a <= 0){ d.a = 0; continue; }
+
+      // draw a short additive line
+      lctx.save();
+      lctx.globalCompositeOperation = "lighter";
+      lctx.globalAlpha = d.a;
+      lctx.translate(d.x, d.y);
+      lctx.rotate(d.rot || 0);
+      lctx.lineWidth = 1.2;   
+     const c = d.color || [255, 240, 200];
+if (Math.random() < 0.3) lctx.strokeStyle = `rgba(160,220,255,${d.a})`;
+      lctx.beginPath();
+      const L = d.len || 12;
+      lctx.moveTo(0, 0);
+      lctx.lineTo(L, 0);
+      lctx.stroke();
+      lctx.restore();
+      // integrate after-draw
+      d.x += d.vx || 0;
+     d.y += d.vy || 0;
+      continue;
+
+
+     }
 
     // draw the circle into the low-res exhaust buffer (exhaustCanvas)
    const sx = d.x * PERF.exScale;
@@ -1618,8 +1648,41 @@ function getTractorCenterX(){
   return (r.left + r.right) * 0.5;             // screen-space center (px)
 }
 
-/* ---------- CITY (reveals during the tractor tail; SPRING-SMOOTH parallax when tractor is visible) ---------- */
 /* ---------- CITY (reveal stays the same; parallax via background-position-x with repeat-x) ---------- */
+
+// --- CITY SPARKS: bright, fast-fading streaks drawn on leafCanvas ---
+function emitCitySparks(x, y, {count=20, speed=6, gravity=0.22, len=[8,16]} = {}){
+  for (let i=0; i<count; i++){
+    const ang = (Math.random() * Math.PI/2) - Math.PI/4; // ±45°
+    const spd = speed + Math.random()*4;
+    addDust({
+      shape: "spark",
+      x, y,
+      vx: Math.cos(ang) * spd,
+      vy: Math.sin(ang) * spd - 1.2,
+      len: len[0] + Math.random()*(len[1]-len[0]),
+      a: 0.9,
+fade: 0.04 + Math.random()*0.015,
+      g: gravity,
+      rot: ang,
+      color: [255, 210 - (Math.random()*50|0), 110 + (Math.random()*60|0)] // warm steel
+    });
+    // a tiny ember afterglow
+    addDust({
+      x: x + (Math.random()-0.5)*5,
+      y: y + (Math.random()-0.5)*5,
+      r: 1 + Math.random()*1.5,
+      a: 0.45,
+      fade: 0.02 + Math.random()*0.02,
+      vx: (Math.random()-0.5)*0.7,
+      vy: -0.3 + Math.random()*0.6,
+      color: [255, 180, 90]
+    });
+  }
+}
+
+
+
 (function City(){
   let built = false, wrap, back, mid, near;
 
@@ -1660,11 +1723,20 @@ function getTractorCenterX(){
         will-change: opacity, filter, transform, background-position;
         filter: blur(2px);
         transform: translate3d(0,30px,0); /* Y is animated during reveal; no X here */
+        pointer-events:auto;          /* enable clicks on the images */
+        /*cursor: crosshair;             optional: “clickable effect” cursor */
+        user-select:none;
       }
       #bgCity .back{ z-index:1; }
       #bgCity .mid { z-index:2; }
       #bgCity .near{ z-index:3; }
+      /* full-screen canvas that we draw sparks onto (above the near layer) */
+      #citySparks{
+        position: fixed; inset: 0; z-index: 4;  /* back:1, mid:2, near:3, sparks:4 */
+        pointer-events: none;                    /* doesn't block clicks */
+      }
     `;
+    
     document.head.appendChild(s);
   }
 
@@ -1691,6 +1763,242 @@ function getTractorCenterX(){
     back.style.backgroundImage = 'url("images/constructioncity_far.png")';
     mid .style.backgroundImage = 'url("images/constructioncity_mid.png")';
     near.style.backgroundImage = 'url("images/constructioncity_near.png")';
+// after back/mid/near exist & have images…
+/* ===== City click router (only active while city is visible) ===== */
+let router = document.getElementById("cityClickRouter");
+if (!router){
+  router = document.createElement("div");
+  router.id = "cityClickRouter";
+  document.body.appendChild(router);
+}
+
+function setRouterEnabled(on){
+  router.style.display = on ? "block" : "none";
+  if (!on) router.style.cursor = "default";
+  else     router.style.cursor = "crosshair";
+}
+
+function debugDot(x,y){
+  const d = document.createElement("div");
+  d.className = "city-dot";
+  d.style.left = x + "px"; d.style.top = y + "px";
+  document.body.appendChild(d);
+  requestAnimationFrame(()=> d.classList.add("fade"));
+  setTimeout(()=> d.remove(), 420);
+}
+
+function elementUnder(x, y){
+  router.style.pointerEvents = "none";
+  const el = document.elementFromPoint(x, y);
+  router.style.pointerEvents = "auto";
+  return el;
+}
+
+// emit sparks into your existing leafCanvas/addDust system
+function emitCitySparksAtClientXY(clientX, clientY, {count=22} = {}){
+  if (!window.leafCanvas || typeof addDust !== "function") return false;
+  const cb = leafCanvas.getBoundingClientRect();
+  const x = clientX - cb.left, y = clientY - cb.top;
+
+  for (let i=0;i<count;i++){
+    const ang = (Math.random()*Math.PI/2) - Math.PI/4; // ±45°
+    const spd = 6 + Math.random()*4;
+    addDust({
+      shape: "spark",
+      x, y,
+      vx: Math.cos(ang)*spd,
+      vy: Math.sin(ang)*spd - 1.2,
+      len: 10 + Math.random()*14,
+      a: 0.95,
+      fade: 0.045 + Math.random()*0.02,
+      g: 0.22,
+      rot: ang,
+      color: [255, 200 - (Math.random()*60|0), 110 + (Math.random()*70|0)]
+    });
+    // ember
+    addDust({
+      x: x + (Math.random()-0.5)*5,
+      y: y + (Math.random()-0.5)*5,
+      r: 1 + Math.random()*1.6,
+      a: 0.5,
+      fade: 0.02 + Math.random()*0.02,
+      vx: (Math.random()-0.5)*0.7,
+      vy: -0.3 + Math.random()*0.6,
+      color: [255, 180, 90]
+    });
+  }
+  return true;
+}
+
+// route clicks only during this scene
+router.addEventListener("click", (ev)=>{
+  // safety: ignore if router is hidden
+  if (router.style.display === "none") return;
+
+  const x = ev.clientX, y = ev.clientY;
+  debugDot(x,y); // remove later if you want
+
+  // if over a tree-wrap, forward so your existing tree click logic runs
+  const under = elementUnder(x,y);
+  const treeWrap = under && under.closest && under.closest("#forestReveal .tree-wrap");
+  if (treeWrap){ treeWrap.click(); return; }
+
+  // otherwise treat as city click (choose intensity by depth)
+  const depth =
+    (under && under.classList && under.classList.contains("near")) ? "near" :
+    (under && under.classList && under.classList.contains("mid"))  ? "mid"  : "back";
+  const counts = { near: 26, mid: 20, back: 16 };
+  emitCitySparksAtClientXY(x, y, { count: counts[depth] || 20 });
+}, {passive:true});
+
+/* monitor visibility: enable router only while city layers are visible
+   (opacity > 0 on any layer). This piggybacks on your City animation. */
+function updateRouterActiveFlag(){
+  // use computed opacity; reveal drives these from 0 → 1
+  const ob = parseFloat(getComputedStyle(back).opacity || "0");
+  const om = parseFloat(getComputedStyle(mid ).opacity || "0");
+  const on = parseFloat(getComputedStyle(near).opacity || "0");
+  const visible = (ob + om + on) > 0.05; // any layer showing?
+  setRouterEnabled(visible);
+}
+// run once now
+updateRouterActiveFlag();
+// and run on interval while city is building
+let routerWatch = setInterval(updateRouterActiveFlag, 1500);
+// optional: stop the watcher after a long while, or keep it—cheap enough.
+
+const hit = document.createElement("div");
+hit.id = "cityHit";
+wrap.appendChild(hit);
+
+// helper: tiny debug dot so you can *see* the click landed
+function debugDot(x, y){
+  const dot = document.createElement("div");
+  dot.className = "city-click-dot";
+  dot.style.left = x + "px";
+  dot.style.top  = y + "px";
+  document.body.appendChild(dot);
+  requestAnimationFrame(()=> dot.classList.add("fade"));
+  setTimeout(()=> dot.remove(), 420);
+}
+
+// attempt to grab your existing leaf canvas + context
+function getLeafCtx(){
+  // If your globals exist, use them
+  if (window.lctx && window.leafCanvas) return {ctx: window.lctx, canvas: window.leafCanvas};
+  // Common fallbacks
+  const c = document.getElementById("leafCanvas") || document.querySelector('canvas#leaves, canvas[data-role="leaves"]');
+  if (!c) return null;
+  const ctx = c.getContext("2d");
+  return {ctx, canvas: c};
+}
+
+// Canvas sparks (Plan A)
+function sparksCanvas(x, y, opts = {}){
+  const L = getLeafCtx();
+  if (!L) return false; // tell caller to try the DOM fallback
+  const {ctx} = L;
+  const count   = opts.count   ?? 22;
+  const speed   = opts.speed   ?? 7;
+  const gravity = opts.gravity ?? 0.25;
+  const lenMin  = opts.lenMin  ?? 10;
+  const lenMax  = opts.lenMax  ?? 22;
+
+  for (let i=0; i<count; i++){
+    const ang = (Math.random()*Math.PI/2) - Math.PI/4; // ±45°
+    const spd = speed + Math.random()*3;
+
+    // one-shot streak (simple: draw & let fade in-place without pooling)
+    const Lseg = lenMin + Math.random()*(lenMax - lenMin);
+    const c = [255, 200 - (Math.random()*60|0), 110 + (Math.random()*70|0)];
+    const steps = 12 + (Math.random()*6|0);
+    let px = x, py = y, vx = Math.cos(ang)*spd, vy = Math.sin(ang)*spd - 1.2;
+
+    (function animateSpark(step, alpha){
+      if (alpha <= 0 || step > steps) return;
+      // draw segment
+      ctx.save();
+      ctx.globalCompositeOperation = "lighter";
+      ctx.globalAlpha = alpha;
+      ctx.translate(px, py);
+      ctx.rotate(ang);
+      ctx.lineWidth = 1.4;
+      ctx.strokeStyle = `rgba(${c[0]},${c[1]},${c[2]},${alpha})`;
+      ctx.beginPath();
+      ctx.moveTo(0, 0); ctx.lineTo(Lseg, 0);
+      ctx.stroke();
+      ctx.restore();
+
+      // integrate
+      vx *= 0.986;
+      vy += gravity;
+      px += vx;
+      py += vy;
+
+      requestAnimationFrame(()=> animateSpark(step+1, alpha - (1/steps)));
+    })(0, 0.95);
+  }
+
+  // embers (few dots)
+  for (let i=0; i<10; i++){
+    const rr = 1 + Math.random()*1.6;
+    const ox = (Math.random()-0.5)*6;
+    const oy = (Math.random()-0.5)*6;
+    const c2 = [255, 180, 90];
+    let ax = x+ox, ay = y+oy, vx = (Math.random()-0.5)*0.7, vy = -0.3 + Math.random()*0.6, a = 0.6;
+
+    (function ember(){
+      if (a <= 0) return;
+      ctx.save();
+      ctx.globalCompositeOperation = "lighter";
+      ctx.globalAlpha = a;
+      ctx.beginPath(); ctx.arc(ax, ay, rr, 0, Math.PI*2); ctx.fillStyle = `rgba(${c2[0]},${c2[1]},${c2[2]},${a})`; ctx.fill();
+      ctx.restore();
+
+      vx *= 0.985; vy += 0.22; ax += vx; ay += vy; a -= 0.06;
+      requestAnimationFrame(ember);
+    })();
+  }
+
+  return true;
+}
+
+// DOM sparks (Plan B, if no canvas visible)
+function sparksDOM(x, y, count = 16){
+  for (let i=0; i<count; i++){
+    const el = document.createElement("div");
+    el.className = "city-spark";
+    const ang = (Math.random()*90 - 45);     // deg
+    const len = 12 + Math.random()*18;
+    const dx  = Math.cos(ang*Math.PI/180) * (4 + Math.random()*8);
+    const dy  = Math.sin(ang*Math.PI/180) * (4 + Math.random()*8);
+
+    el.style.left = x + "px";
+    el.style.top  = y + "px";
+    el.style.transform = `translate(-1px,-1px) rotate(${ang}deg) scaleX(0.4)`;
+    document.body.appendChild(el);
+
+    // kick animation
+    requestAnimationFrame(()=>{
+      el.style.transform = `translate(${dx}px,${dy}px) rotate(${ang}deg) scaleX(${len/14})`;
+      el.style.opacity = "0";
+    });
+    setTimeout(()=> el.remove(), 320);
+  }
+}
+
+// click handler → viewport coords → canvas coords (if needed)
+function onHitClick(ev){
+  const x = ev.clientX;
+  const y = ev.clientY;
+  debugDot(x, y); // always shows so you can confirm the hit
+
+  // Try canvas first. If your leaf canvas is above everything,
+  // drawing there will show. If not found or hidden, fallback to DOM sparks.
+  const ok = sparksCanvas(x, y);
+  if (!ok) sparksDOM(x, y, 20);
+}
+hit.addEventListener("click", onHitClick, {passive:true});
 
     // start hidden (reveal curve unchanged)
     [back, mid, near].forEach(el=>{
@@ -1700,6 +2008,124 @@ function getTractorCenterX(){
       // initialize background positions
       el.style.backgroundPosition = "50% 100%";
     });
+
+/* ==== 👇 ADD THIS BLOCK (sparks canvas + clicks) ==== */
+const sparks = document.createElement("canvas");
+sparks.id = "citySparks";
+wrap.appendChild(sparks);
+
+const sctx = sparks.getContext("2d", { alpha: true });
+const SP = { list: [], last: performance.now() };
+
+function resizeSparks(){
+  const dpr = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
+  sparks.width  = Math.round(window.innerWidth  * dpr);
+  sparks.height = Math.round(window.innerHeight * dpr);
+  sparks.style.width  = window.innerWidth + "px";
+  sparks.style.height = window.innerHeight + "px";
+  sctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+}
+resizeSparks();
+window.addEventListener("resize", resizeSparks);
+
+/* emitter: short, bright welding streaks */
+function emitCityWeldSparks(x, y, count = 18){
+  for (let i = 0; i < count; i++){
+    const ang = (Math.random()*Math.PI/3) - Math.PI/6; // ±30°
+    const spd = 8 + Math.random()*6;
+    addDust({
+      shape: "spark",
+      x, y,
+      vx: Math.cos(ang)*spd,
+      vy: Math.sin(ang)*spd + 1.5,  // slight downward pull
+      len: 10 + Math.random()*10,
+      a: 1.0,
+      fade: 0.08 + Math.random()*0.03,  // very fast fade
+      g: 0.35,
+      rot: ang,
+      color: [255, 255 - (Math.random()*60|0), 200 - (Math.random()*100|0)] // white-yellow core
+    });
+  }
+
+  // blue-white flash at the welding point
+  const L = window.lctx;
+  if (L){
+    const grd = L.createRadialGradient(x, y, 0, x, y, 25);
+    grd.addColorStop(0, "rgba(255,255,255,0.8)");
+    grd.addColorStop(0.4, "rgba(150,220,255,0.5)");
+    grd.addColorStop(1, "rgba(150,220,255,0)");
+    L.save();
+    L.fillStyle = grd;
+    L.fillRect(x-25, y-25, 50, 50);
+    L.restore();
+  }
+}
+
+/* render loop just for city sparks */
+function tickSparks(ts){
+  const dt = Math.min(0.05, Math.max(1/120, (ts - SP.last)/1000 || 0));
+  SP.last = ts;
+
+  sctx.clearRect(0, 0, sparks.width, sparks.height);
+
+  // draw particles
+  for (let i=SP.list.length-1;i>=0;i--){
+    const p = SP.list[i];
+    p.a -= p.fade;
+    if (p.a <= 0){ SP.list.splice(i,1); continue; }
+
+    if (p.ember){
+      p.vx *= 0.985;
+      p.vy += 0.22*dt*60;
+      p.x  += p.vx;
+      p.y  += p.vy;
+
+      sctx.globalCompositeOperation = "lighter";
+      sctx.globalAlpha = p.a;
+      sctx.beginPath();
+      sctx.arc(p.x, p.y, p.r || 1.2, 0, Math.PI*2);
+      sctx.fillStyle = `rgba(${p.c[0]},${p.c[1]},${p.c[2]},${Math.min(1,p.a)})`;
+      sctx.fill();
+    } else {
+      // spark streak
+      p.vx *= 0.986;
+      p.vy += 0.22*dt*60;
+      p.x  += p.vx;
+      p.y  += p.vy;
+
+      sctx.save();
+      sctx.globalCompositeOperation = "lighter";
+      sctx.globalAlpha = p.a;
+      sctx.translate(p.x, p.y);
+      sctx.rotate(p.rot || 0);
+      sctx.lineWidth = 1.4;
+      sctx.strokeStyle = `rgba(${p.c[0]},${p.c[1]},${p.c[2]},${Math.min(1,p.a)})`;
+      sctx.beginPath();
+      const L = p.len || 12;
+      sctx.moveTo(0,0); sctx.lineTo(L,0);
+      sctx.stroke();
+      sctx.restore();
+    }
+  }
+  requestAnimationFrame(tickSparks);
+}
+requestAnimationFrame(tickSparks);
+
+/* click → canvas coords → emit, tuned per depth */
+function onCityClick(layer){
+  const cfg = layer==="near" ? {count:24,speed:7.5,gravity:0.24,len:[10,18]}
+            : layer==="mid"  ? {count:18,speed:6.0, gravity:0.20,len:[8,15]}
+                              : {count:14,speed:5.0, gravity:0.18,len:[7,13]};
+  return (ev)=>{
+    const x = ev.clientX;         // sparks canvas is fullscreen, so viewport coords are canvas coords
+    const y = ev.clientY;
+    emitCitySparks(x, y, cfg);
+  };
+}
+back.addEventListener("click", onCityClick("back"), {passive:true});
+mid .addEventListener("click", onCityClick("mid"),  {passive:true});
+near.addEventListener("click", onCityClick("near"), {passive:true});
+
 
     built = true;
     startTicker();
@@ -1740,6 +2166,14 @@ function getTractorCenterX(){
       if (back) back.style.transform = `translate3d(0,${back.__cityY || 30}px,0)`;
       if (mid)  mid .style.transform = `translate3d(0,${mid .__cityY || 30}px,0)`;
       if (near) near.style.transform = `translate3d(0,${near.__cityY || 30}px,0)`;
+if (wrap) {
+  // keep router enabled only while city is visible
+  const ob = back ? parseFloat(getComputedStyle(back).opacity || "0") : 0;
+  const om = mid  ? parseFloat(getComputedStyle(mid ).opacity || "0") : 0;
+  const on = near ? parseFloat(getComputedStyle(near).opacity || "0") : 0;
+  const visible = (ob + om + on) > 0.05;
+  (visible ? setRouterEnabled(true) : setRouterEnabled(false));
+}
 
       requestAnimationFrame(tick);
     }
@@ -3143,3 +3577,95 @@ if (document.readyState === "loading") {
   init();
 }
 window.addEventListener("resize", debounce(rebuildRows, 120));
+(function CityClickRouter(){
+  if (document.getElementById("cityClickRouter")) return;
+
+  const overlay = document.createElement("div");
+  overlay.id = "cityClickRouter";
+  document.body.appendChild(overlay);
+
+  function debugDot(x,y){
+    const d = document.createElement("div");
+    d.className = "city-dot";
+    d.style.left = x + "px";
+    d.style.top  = y + "px";
+    document.body.appendChild(d);
+    requestAnimationFrame(()=> d.classList.add("fade"));
+    setTimeout(()=> d.remove(), 420);
+  }
+
+  function elementUnder(x, y){
+    // temporarily let the real underlying element be hit-tested
+    overlay.style.pointerEvents = "none";
+    const el = document.elementFromPoint(x, y);
+    overlay.style.pointerEvents = "auto";
+    return el;
+  }
+
+  // emit sparks into YOUR existing leafCanvas/addDust pipeline
+  function emitCitySparksAtClientXY(clientX, clientY, {count=22} = {}){
+    if (!window.leafCanvas) return false;
+    const cb = leafCanvas.getBoundingClientRect();
+    const x = clientX - cb.left, y = clientY - cb.top;
+
+    for (let i=0;i<count;i++){
+      const ang = (Math.random()*Math.PI/2) - Math.PI/4; // ±45°
+      const spd = 6 + Math.random()*4;
+      addDust({
+        shape: "spark",
+        x, y,
+        vx: Math.cos(ang)*spd,
+        vy: Math.sin(ang)*spd - 1.2,
+        len: 10 + Math.random()*14,
+        a: 0.95,
+        fade: 0.045 + Math.random()*0.02,
+        g: 0.22,
+        rot: ang,
+        color: [255, 200 - (Math.random()*60|0), 110 + (Math.random()*70|0)]
+      });
+      // little ember
+      addDust({
+        x: x + (Math.random()-0.5)*5,
+        y: y + (Math.random()-0.5)*5,
+        r: 1 + Math.random()*1.6,
+        a: 0.5,
+        fade: 0.02 + Math.random()*0.02,
+        vx: (Math.random()-0.5)*0.7,
+        vy: -0.3 + Math.random()*0.6,
+        color: [255, 180, 90]
+      });
+    }
+    return true;
+  }
+
+  // decide where the click should go
+  overlay.addEventListener("click", (ev)=>{
+    const x = ev.clientX, y = ev.clientY;
+    debugDot(x,y);
+
+    const under = elementUnder(x,y);
+
+    // if you clicked a tree, forward the click so your existing handler runs
+    const treeWrap = under && under.closest && under.closest("#forestReveal .tree-wrap");
+    if (treeWrap){
+      // forward: this triggers your existing attachTreeClicks() logic
+      treeWrap.click();
+      return;
+    }
+
+    // if it's the city (your City layers container) or the bg area → sparks
+    const onCity =
+      (under && (under.closest && under.closest("#bgCity"))) ||  // City IIFE wrap
+      document.getElementById("bgCity"); // fallback allow anywhere if city visible
+
+    if (onCity){
+      emitCitySparksAtClientXY(x, y, {
+        count:  (under && under.classList && under.classList.contains("near")) ? 26 :
+                (under && under.classList && under.classList.contains("mid"))  ? 20 : 16
+      });
+      return;
+    }
+
+    // anything else (sky/empty) → no-op (or do subtle dust if you want)
+  }, {passive:true});
+})();

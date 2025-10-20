@@ -158,6 +158,47 @@
   z-index: 4;                     /* under leaves (z:9), above backgrounds */
   overflow: hidden;
 }
+/* Transparent click-catcher above city layers */
+#cityHit{
+  position: fixed; inset: 0;
+  z-index: 6;              /* above .near (3) and any city canvas you added */
+  pointer-events: auto;     /* receives clicks */
+  background: transparent;  /* invisible */
+  user-select: none;
+  cursor: crosshair;
+}
+
+/* tiny debug dot so you *see* where we think you clicked */
+.city-click-dot{
+  position: fixed;
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 0 10px rgba(255,255,255,0.9);
+  z-index: 7;              /* above the hit overlay */
+  pointer-events: none;
+  transform: translate(-50%,-50%);
+  opacity: 1;
+  transition: opacity 350ms ease-out, transform 350ms ease-out;
+}
+.city-click-dot.fade{
+  opacity: 0;
+  transform: translate(-50%,-50%) scale(1.5);
+}
+
+/* DOM-sparks fallback (if no canvas available) */
+.city-spark{
+  position: fixed;
+  width: 14px; height: 2px;
+  pointer-events: none;
+  z-index: 7;
+  background: linear-gradient(90deg, rgba(255,230,160,1), rgba(255,160,70,0.8), rgba(255,80,0,0.0));
+  transform-origin: left center;
+  mix-blend-mode: screen;
+  filter: drop-shadow(0 0 4px rgba(255,190,120,0.9));
+  opacity: 0.95;
+  transition: transform 300ms ease-out, opacity 300ms ease-out;
+}
 
 /* If the “ridge” should sit a bit higher, nudge it up: */
 :root{ --groundRise: 0px; }      /* matches your JS settling line */
@@ -168,3 +209,24 @@
   transform: translateY(calc(-1 * var(--groundRise)));
    transition: opacity 0.25s linear;
 }
+/* topmost click router */
+#cityClickRouter{
+  position: fixed;
+  inset: 0;
+  display: none;           /* ← hidden by default */
+  z-index: 9999;           /* above trees/canvases/city */
+  pointer-events: auto;
+  background: transparent;
+  user-select: none;
+  cursor: crosshair;
+}
+/* tiny debug flash so you *see* we caught the click */
+.city-dot{
+  position: fixed;
+  width: 6px; height: 6px; border-radius: 50%;
+  background: #fff; box-shadow: 0 0 10px rgba(255,255,255,0.9);
+  pointer-events: none; z-index: 10000;
+  transform: translate(-50%,-50%);
+  opacity: 1; transition: opacity .35s ease, transform .35s ease;
+}
+.city-dot.fade{ opacity: 0; transform: translate(-50%,-50%) scale(1.6); }
