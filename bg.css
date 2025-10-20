@@ -1,7 +1,9 @@
 /* reset */
 *{margin:0;padding:0;box-sizing:border-box;}
-html,body{height:100%;}
+html,body{height:100%;overflow-x: clip;}
 body{font-family: system-ui, -apple-system, "Segoe UI", Roboto, Inter, Arial; color:#222;}
+
+
 
 /* ---- fixed background root ---- */
 #bg{

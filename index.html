@@ -23,22 +23,14 @@
     <link rel="stylesheet" href="city-reveal.css" />
 </head>
 <body>
-<button id="micWindBtn" style="
-  position:fixed; right:16px; bottom:16px; z-index:9999;
-  padding:10px 14px; border:0; border-radius:10px; cursor:pointer;
-  background:#0a0a0d; color:#e6e6f0; font:600 14px/1 system-ui;
-  box-shadow: 0 6px 20px rgba(0,0,0,.25); opacity:.9">
-  🌬️ Enable Mic Wind
-</button>
-  <!-- FIXED BACKGROUND ORCHESTRATOR (always covers viewport) -->
+  <button id="micWindBtn" style="position:fixed; right:16px; bottom:16px; z-index:9999; padding:10px 14px; border:0; border-radius:10px; cursor:pointer; background:#0a0a0d; color:#e6e6f0; font:600 14px/1 system-ui; box-shadow:0 6px 20px rgba(0,0,0,.25); opacity:.9">
+    🌬️ Enable Mic Wind
+  </button>
+
+  <!-- Fixed background (separate, never inside a scene) -->
   <div id="bg">
-    <!-- gradient sky that fades in first -->
     <div id="bg-sky"></div>
-
-    <!-- soft white feather that hides any seam while we start -->
     <div id="bg-whiteBlend"></div>
-
-    <!-- parallax images (bottom-locked; never cropped) -->
     <img class="bg-layer far"  src="images/bg-far.png"  alt="">
     <img class="bg-layer mid"  src="images/bg-mid.png"  alt="">
     <img class="bg-layer near" src="images/bg-near.png" alt="">
@@ -54,46 +46,43 @@
     <canvas id="particleCanvas"></canvas>
   </section>
 
-  <!-- the “bridge” region controls the background transition -->
+  <!-- Bridge (transition controller) -->
   <section id="bridge"></section>
 
+  <!-- ===== Scene 2 (Forest Reveal) ===== -->
   <section id="forestReveal" class="section-forest">
-<div id="tractorLayer" aria-hidden="true">
-  <img id="tractor" src="images/tractor.png" alt="" />
-</div>
-<!-- forest scene ends above -->
-<section id="cityReveal" class="scene">
-  <!-- temporary visual so we can see the handoff working -->
-  <div id="cityBackdrop"></div>
-</section>
+    <div id="tractorLayer" aria-hidden="true">
+      <img id="tractor" src="images/tractor.png" alt="" />
+    </div>
 
+    <div id="ground">
+      <img class="g stage0" src="images/ground_stage0.png" alt="">
+      <img class="g stage1" src="images/ground_stage1.png" alt="" style="opacity:0">
+      <img class="g stage2" src="images/ground_stage2.png" alt="" style="opacity:0">
+      <img class="g stage3" src="images/ground_stage3.png" alt="" style="opacity:0">
+      <img class="g stage4" src="images/ground_stage4.png" alt="" style="opacity:0">
+      <img class="g stage5" src="images/ground_stage5.png" alt="" style="opacity:0">
+    </div>
 
+    <canvas id="leafCanvas"></canvas>
+    <div class="tree-row-back" id="treeRowBack"></div>
+    <div class="tree-row"      id="treeRow"></div>
+  </section>
 
-<div id="ground">
-  <img class="g stage0" src="images/ground_stage0.png" alt="">
-  <img class="g stage1" src="images/ground_stage1.png" alt="" style="opacity:0">
-  <img class="g stage2" src="images/ground_stage2.png" alt="" style="opacity:0">
-  <img class="g stage3" src="images/ground_stage3.png" alt="" style="opacity:0">
-  <img class="g stage4" src="images/ground_stage4.png" alt="" style="opacity:0"> 
-    <img class="g stage5" src="images/ground_stage5.png" alt="" style="opacity:0"> 
-</div>
+  <!-- ===== Scene 3 (City Reveal) — now a SIBLING after forest ===== -->
+  <section id="cityReveal" class="scene">
+    <div id="cityBackdrop"></div>
+  </section>
 
-  
-
-  <canvas id="leafCanvas"></canvas>   <!-- sits above both rows -->
-  <div class="tree-row-back" id="treeRowBack"></div>
-  <div class="tree-row"      id="treeRow"></div>
-</section>
-
-
-
-<script src="fliers.js"></script>
-<script src="bg-rainbow.js"></script>
-<script src="forest-row.js"></script>
-<script src="tractor.js"></script>
-<script src="mic-wind.js"></script>
+  <!-- Scripts (after DOM so ids exist) -->
+  <script src="fliers.js"></script>
+  <script src="bg-rainbow.js"></script>
+  <script src="forest-row.js"></script>
+  <script src="tractor.js"></script>
+  <script src="mic-wind.js"></script>
   <script src="scene1.js"></script>
-    <script src="city-reveal.js"></script>
+  <script src="city-reveal.js"></script>
   <script src="bg.js"></script>
 </body>
+
 </html>
