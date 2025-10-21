@@ -14,14 +14,21 @@
     DOT_DELAY: 600,
     SUBTEXT_DELAY: 800,
     WORD_STAGGER: 160,
-    SCROLL_HINT_DELAY: 3200
+    // SCROLL_HINT_DELAY is now handled by size ramp completion (see showHintAndUnlock)
   };
 
-  // ---------------- particles knobs ----------------
+  // ---------------- particles knobs (VISIBILITY BOOST) ----------------
   const PARTICLES = {
-    TARGET: 50,
-    RAMP_MS: 3000,
-    ALPHA_MAX: 0.16
+    TARGET: 110,      // final density
+    RAMP_MS: 3000,    // how fast we REACH target count
+    ALPHA_MAX: 0.22
+  };
+
+  // ----- NEW: size growth timing (tiny -> full) -----
+  const GROW = {
+    SIZE_MS: 5000,    // total time to reach full size
+    START_SIZE_MUL: 0.45, // tiny start
+    END_SIZE_MUL:   1.00  // full size matches your current look
   };
 
   // === Rain + smoothing config ===
@@ -34,11 +41,27 @@
     AIR_RESIST_IDLE_Y: 0.965,
     VEL_CLAMP: 3.0,
     IDLE_DRIFT_BOOST: 5,
-    FALL_DECAY_MS: 520
+    FALL_DECAY_MS: 520,
+
+    // streak morph controls (VISIBILITY BOOST)
+    STREAK_LEN_MAX: 36,
+    STREAK_SMOOTH: 0.14,
+    STREAK_WIDTH_MIN: 1.0,
+    STREAK_WIDTH_MAX: 2.6
+  };
+
+  // --- Direction flip controls (keeps "no sky lines") ---
+  const DIR = {
+    THRESH: 120,
+    UP_SNAP_MS: 140,
+    DAMP_ON_FLIP: 0.35
   };
 
   const lerp = (a,b,t)=>a+(b-a)*t;
+  const easeInCubic = t => t*t*t;
   const easeOutCubic = t => 1 - Math.pow(1 - t, 3);
+  const easeInOutCubic = t => t<0.5 ? 4*t*t*t : 1 - Math.pow(-2*t+2,3)/2;
+  const clamp01 = x => Math.max(0, Math.min(1, x));
 
   // ---------------- scroll lock ----------------
   let scrollLocked = true;
@@ -90,17 +113,14 @@
   function primeAudioOnce() {
     if (audioPrimed) return;
     particleSound = createAudio();
-    // Try to start and immediately pause to satisfy some browsers’ gesture requirement
     particleSound.play().then(() => {
       particleSound.pause();
       particleSound.currentTime = 0;
       audioPrimed = true;
-      // If particles already started but we couldn’t play earlier, play now
       if (animateStarted && !whooshPlayed) {
         try { particleSound.currentTime = 0; particleSound.play(); whooshPlayed = true; } catch {}
       }
     }).catch(() => {
-      // Even if play() rejects here, having created it during a gesture often unlocks later plays
       audioPrimed = true;
       if (animateStarted && !whooshPlayed) {
         try { particleSound.currentTime = 0; particleSound.play(); whooshPlayed = true; } catch {}
@@ -117,13 +137,30 @@
   let particles = [];
   let particleAlpha = 0;    // 0 -> ALPHA_MAX
   let driftMul = 0.6;
-  let sizeMul  = 0.85;
+  let sizeMul  = GROW.START_SIZE_MUL;  // start tiny, ramp to 1.0
   let rafOn = true;
 
   // Rain state (smoothed)
   let grav = 0;
   let gravTarget = 0;
   let falloffTween = null;
+
+  // Streak morph state (0..1)
+  let streak = 0;
+  let streakTarget = 0;
+
+  // Direction state
+  let lastDir = 0; // -1 up, 0 idle, +1 down
+
+  // hint control
+  let hintShown = false;
+  function showHintAndUnlock(){
+    if (hintShown) return;
+    hintShown = true;
+    scrollHintEl.classList.remove("hidden");
+    scrollHintEl.style.opacity = 1;
+    unlockScroll();
+  }
 
   // ---------------- setup ----------------
   function resizeCanvas(){
@@ -167,17 +204,15 @@
         }, SPEED.SUBTEXT_DELAY);
       }, SPEED.DOT_DELAY);
 
-      setTimeout(() => {
-        scrollHintEl.classList.remove("hidden");
-        scrollHintEl.style.opacity = 1;
-        unlockScroll();
-      }, SPEED.SCROLL_HINT_DELAY);
+      // NOTE: we no longer show the scroll hint here.
+      // It appears when the SIZE ramp completes (see startParticles()).
     }
   }
 
   // ---------------- particles ----------------
   function createParticle(){
-    const size = Math.random()*2 + 1;
+    // keep your base particle size distribution; actual draw size scales by sizeMul
+    const size = Math.random()*2.2 + 1.2;
     return {
       x: Math.random()*pCanvas.width,
       y: Math.random()*pCanvas.height,
@@ -188,12 +223,17 @@
   }
 
   function drawParticles(){
+    // smooth gravity + streak factor
     grav = lerp(grav, gravTarget, 0.14);
+    streak = lerp(streak, streakTarget, RAIN.STREAK_SMOOTH);
 
     pCtx.clearRect(0,0,pCanvas.width,pCanvas.height);
 
     const idle = grav < 0.01;
     const driftEff = driftMul * (idle ? RAIN.IDLE_DRIFT_BOOST : 1);
+
+    // stroke width: thicker for dots, thinner (but still visible) for streaks
+    const lineW = lerp(RAIN.STREAK_WIDTH_MAX, RAIN.STREAK_WIDTH_MIN, streak);
 
     for(const p of particles){
       const dx = p.x - mouseX;
@@ -220,6 +260,7 @@
       p.x += p.vx * driftEff;
       p.y += p.vy * driftEff;
 
+      // wrap / recycle
       if (p.x < -6) p.x = pCanvas.width + 6;
       if (p.x > pCanvas.width + 6) p.x = -6;
       if (p.y - p.size > pCanvas.height + 2) {
@@ -228,10 +269,28 @@
         p.vy *= 0.25;
       }
 
-      pCtx.fillStyle = `rgba(0,0,0,${Math.min(PARTICLES.ALPHA_MAX, particleAlpha).toFixed(3)})`;
-      pCtx.beginPath();
-      pCtx.arc(p.x, p.y, p.size * sizeMul, 0, Math.PI*2);
-      pCtx.fill();
+      const alpha = Math.min(PARTICLES.ALPHA_MAX, particleAlpha);
+      pCtx.strokeStyle = `rgba(0,0,0,${alpha.toFixed(3)})`;
+      pCtx.fillStyle   = `rgba(0,0,0,${alpha.toFixed(3)})`;
+
+      if (streak < 0.10) {
+        // dots
+        pCtx.beginPath();
+        pCtx.arc(p.x, p.y, p.size * sizeMul, 0, Math.PI*2);
+        pCtx.fill();
+      } else {
+        // streaks (slightly stronger slant & length for visibility)
+        const vyPos = Math.max(0, p.vy + grav);
+        const len   = lerp(p.size * 0.9, p.size * 0.9 + RAIN.STREAK_LEN_MAX, streak) + vyPos * 7.5 * streak;
+        const slant = p.vx * 3.8 * streak;
+
+        pCtx.beginPath();
+        pCtx.lineWidth = lineW;
+        pCtx.lineCap = "round";
+        pCtx.moveTo(p.x - slant, p.y - len);
+        pCtx.lineTo(p.x, p.y);
+        pCtx.stroke();
+      }
     }
   }
 
@@ -250,9 +309,7 @@
     if (!whooshPlayed) {
       particleSound.currentTime = 0;
       particleSound.play().then(() => { whooshPlayed = true; })
-      .catch(() => {
-        // Will auto-play on first gesture via primeAudioOnce()
-      });
+      .catch(() => { /* will play on first gesture */ });
     }
 
     animateParticles();
@@ -260,34 +317,40 @@
     const t0 = performance.now();
     let spawned = 0;
 
-    const easeInCubic = t => t*t*t;
-    const easeInQuint = t => t*t*t*t*t;
-
     function tick(){
       const elapsed = performance.now() - t0;
-      const t = Math.min(1, elapsed / PARTICLES.RAMP_MS);
 
-      const shouldHave = Math.floor(PARTICLES.TARGET * easeInQuint(t));
+      // count/alpha ramps (unchanged from your boosted setup)
+      const tCountRaw = Math.min(1, elapsed / PARTICLES.RAMP_MS);
+      const tCount    = easeInCubic(tCountRaw);
+      const shouldHave = Math.floor(PARTICLES.TARGET * tCount);
       while (spawned < shouldHave) {
         particles.push(createParticle());
         spawned++;
       }
 
-      const eAlpha = easeInCubic(t);
+      const aT = easeInCubic(tCountRaw);
       const startAlpha = 0.01;
-      particleAlpha = startAlpha + (PARTICLES.ALPHA_MAX - startAlpha) * eAlpha;
+      particleAlpha = startAlpha + (PARTICLES.ALPHA_MAX - startAlpha) * aT;
 
-      driftMul = 0.6 + 0.6 * eAlpha;
-      sizeMul  = 0.85 + 0.35 * eAlpha;
+      // ---- NEW: size-only ramp (tiny -> full), controls when we show hint ----
+      const tSizeRaw = Math.min(1, elapsed / GROW.SIZE_MS);
+      const tSize    = easeInOutCubic(tSizeRaw);
+      sizeMul = lerp(GROW.START_SIZE_MUL, GROW.END_SIZE_MUL, tSize);
 
-      if (t < 1) requestAnimationFrame(tick);
+      // once full size reached, reveal hint & unlock scroll
+      if (tSizeRaw >= 1 && !hintShown) {
+        showHintAndUnlock();
+      }
+
+      if (tSizeRaw < 1 || tCountRaw < 1) requestAnimationFrame(tick);
     }
     tick();
   }
 
   // ---------------- init ----------------
   function init(){
-    lockScroll();
+    lockScroll(); // keep locked until size ramp completes
     resizeCanvas();
     typeWriter();
 
@@ -308,6 +371,7 @@
   // ===== SCROLL-DRIVEN bits =====
   gsap.registerPlugin(ScrollTrigger);
 
+  // fade out the lines during scroll
   gsap.timeline({
     scrollTrigger:{
       trigger:"#landing",
@@ -320,6 +384,7 @@
   .to("#subText",   { opacity:0, y:-10, ease:"power2.out" }, 0)
   .to("#scrollHint",{ opacity:0,           ease:"power2.out" }, 0);
 
+  // gravity & streak control based on scroll direction/velocity
   ScrollTrigger.create({
     trigger:"#landing",
     start:"top top",
@@ -327,23 +392,64 @@
     scrub:true,
     onUpdate(self){
       if (falloffTween) { falloffTween.kill(); falloffTween = null; }
+
+      // base gravity from progress
       const base = RAIN.GRAV_MAX * easeOutCubic(self.progress);
+
+      // velocity & direction
       const v = self.getVelocity();
+      const dir = (v > DIR.THRESH) ? 1 : (v < -DIR.THRESH) ? -1 : 0;
+
+      // detect flip to UP: snap streaks off + damp vy to kill long lines
+      if (dir === -1 && lastDir !== -1) {
+        gsap.killTweensOf(streakTarget);
+        gsap.killTweensOf(streak);
+        streakTarget = 0;
+        gsap.to({val: streak}, {
+          duration: DIR.UP_SNAP_MS / 1000,
+          val: 0,
+          ease: "power2.out",
+          onUpdate(){ streak = this.targets()[0].val; }
+        });
+        for (const p of particles) p.vy *= DIR.DAMP_ON_FLIP;
+      }
+      lastDir = dir;
+
+      // velocity boost only when moving down
       const vNorm = gsap.utils.clamp(-1, 1, v / RAIN.VEL_NORM);
       const boost = vNorm > 0 ? vNorm * RAIN.GRAV_MAX * RAIN.BOOST_GAIN : 0;
       gravTarget = base + boost;
+
+      // streak target only grows on downward motion; clamps 0..1
+      const down = Math.max(0, v) / RAIN.VEL_NORM;
+      streakTarget = (dir === 1) ? gsap.utils.clamp(0, 1, down) : 0;
+
+      // also force dots near the very top to prevent “sky lines”
+      if (self.progress < 0.02) {
+        streakTarget = 0;
+      }
     },
-    onScrubComplete(self){
+    onScrubComplete(){
       const cur = gravTarget;
+      // decay gravity smoothly after scroll settles
       falloffTween = gsap.to({g: cur}, {
         duration: RAIN.FALL_DECAY_MS / 1000,
         g: 0,
         ease: "power2.out",
         onUpdate(){ gravTarget = this.targets()[0].g; }
       });
+
+      // relax streaks after scrub stops
+      gsap.to({s: streakTarget}, {
+        duration: 0.35,
+        s: 0,
+        ease: "power2.out",
+        onUpdate(){ streakTarget = this.targets()[0].s; }
+      });
     }
   });
 
+  // fade away particle layer across the bridge section
   ScrollTrigger.create({
     trigger:"#bridge",
     start:"top bottom",
@@ -351,13 +457,17 @@
     scrub:true,
     onUpdate(self){
       const p = self.progress;
-      gsap.to("#particleCanvas", { opacity: 1 - p, overwrite: "auto", duration: 0.1 });
+      const vis = (1 - p) * (1 - 0.35 * streak); // bias opacity down when heavy rain
+      gsap.to("#particleCanvas", { opacity: vis, overwrite: "auto", duration: 0.1 });
     },
     onLeave(){
       rafOn = false;
       gsap.set("#particleCanvas", { opacity: 0 });
     },
     onLeaveBack(){
+      // coming back up from below: reset to dots immediately
+      streak = 0;
+      streakTarget = 0;
       if (!rafOn){
         rafOn = true;
         requestAnimationFrame(animateParticles);
