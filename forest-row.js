@@ -1612,6 +1612,141 @@ L3.style.opacity = c(o3).toFixed(3);
   window.__fog__ = { build, update, boostTail }; // CHANGED
 
 })();
+
+/* ---------- BACKGROUND STARS (fade in Mid2, persist in Bare) ---------- */
+(function BackgroundStars(){
+  let built = false, wrap, cvs, ctx, stars = [], w = 0, h = 0;
+
+  function css(){
+    if (document.getElementById("bgstars-style")) return;
+    const s = document.createElement("style");
+    s.id = "bgstars-style";
+    s.textContent = `
+      #bg #bgStars{ position:fixed; inset:0; pointer-events:none; z-index:5; } /* under fog (z:6) */
+      #bgStars canvas{ position:absolute; inset:0; width:100%; height:100%; }
+    `;
+    document.head.appendChild(s);
+  }
+
+  function size(){
+    if (!cvs) return;
+    const dpr = Math.max(1, window.devicePixelRatio || 1);
+    const rect = cvs.getBoundingClientRect();
+    w = Math.max(1, Math.floor(rect.width  * dpr * 0.7));  // half-ish res for perf
+    h = Math.max(1, Math.floor(rect.height * dpr * 0.7));
+    cvs.width = w; cvs.height = h;
+  }
+
+  function makeStars(n=90){
+  stars.length = 0;
+
+  // ---- SKY BAND KNOBS ----
+  const TOP_BAND = 0.28;   // top % of canvas
+  const Y_OFFSET = 0.02;   // keep a small margin from the very top
+  const yMax = h * TOP_BAND;
+  const yMin = h * Y_OFFSET;
+
+  for (let i=0;i<n;i++){
+    const y = yMin + Math.random() * (yMax - yMin);
+    stars.push({
+      x: Math.random()*w,
+      y,
+      r: 0.5 + Math.random()*1.4,
+      b: 0.35 + Math.random()*0.65,
+      tw: 0.6 + Math.random()*1.2,
+      ph: Math.random()*Math.PI*2,
+      drift: (Math.random()-0.5)*0.04,
+
+      // fade stars that are lower in the band, so they feel “higher”
+      yFade: Math.pow(1 - (y - yMin) / Math.max(1, yMax - yMin), 1.4)
+    });
+  }
+}
+
+
+  function build(){
+    if (built) return;
+    const bg = document.getElementById("bg");
+    if (!bg) return;
+
+    css();
+    wrap = document.createElement("div");
+    wrap.id = "bgStars";
+    cvs = document.createElement("canvas");
+    wrap.appendChild(cvs);
+    bg.appendChild(wrap);
+
+    ctx = cvs.getContext("2d");
+    size(); makeStars();
+
+    window.addEventListener("resize", ()=>{ size(); makeStars(stars.length); });
+    built = true;
+  }
+
+  function clear(){ ctx.clearRect(0,0,w,h); }
+
+  // forestP = 0..1 (Full->Mid1->Mid2->Bare)
+  function update(forestP){
+    if (!built) return;
+    clear();
+
+    // compute segment + eased t within segment (same logic as setStageProgress)
+   // compute segment + eased t within segment (same as before)
+const seg = (forestP < 1/3) ? 0 : (forestP < 2/3) ? 1 : 2;
+const segT = (seg === 0) ? (forestP/(1/3))
+            : (seg === 1) ? ((forestP-1/3)/(1/3))
+                          : ((forestP-2/3)/(1/3));
+const easeInOut = t => t*t*(3-2*t);
+const t = Math.max(0, Math.min(1, easeInOut(segT)));
+
+// ---- APPEARANCE KNOBS ----
+const LATE_MID2_T   = 0.82; // start to whisper-in near the end of Mid-2
+const LATE_MID2_OP  = 0.02; // almost invisible
+const SEG2_DELAY    = 0.25; // delay into Seg2 before real ramp begins
+const SEG2_BASE_OP  = 0.15; // base opacity at ramp start
+const SEG2_PEAK_OP  = 1.00; // peak opacity by Bare
+
+let op = 0;
+if (seg === 1) {
+  // late Mid-2 whisper
+  if (segT >= LATE_MID2_T) op = LATE_MID2_OP;
+} else if (seg === 2) {
+  // delay the ramp so it doesn't pop immediately at Seg2 start
+  const td = Math.max(0, (segT - SEG2_DELAY) / (1 - SEG2_DELAY)); // 0..1
+  const e  = easeInOut(td);
+  op = SEG2_BASE_OP + (SEG2_PEAK_OP - SEG2_BASE_OP) * e;
+}
+// seg 0 stays at 0
+
+
+    // gentle twinkle + micro parallax drift
+    const now = performance.now()/1000;
+    ctx.save();
+    ctx.globalCompositeOperation = "lighter";
+    for (let s of stars){
+      s.x += s.drift; if (s.x < -2) s.x = w+2; if (s.x > w+2) s.x = -2;
+      const tw = 0.5 + 0.5*Math.sin(s.ph + now*s.tw);   // 0..1
+      const a  = op * (s.b*0.4 + tw*0.6);               // brightness*opacity
+      if (a < 0.01) continue;
+
+      // soft star core + glow (two passes)
+      ctx.globalAlpha = a;
+      ctx.fillStyle = "rgba(255,255,255,1)";
+      ctx.beginPath(); ctx.arc(s.x, s.y, s.r, 0, Math.PI*2); ctx.fill();
+
+      ctx.globalAlpha = a * 0.5;
+      ctx.filter = "blur(1.2px)";
+      ctx.beginPath(); ctx.arc(s.x, s.y, s.r*2.2, 0, Math.PI*2); ctx.fill();
+      ctx.filter = "none";
+    }
+    ctx.restore();
+  }
+
+  window.__stars__ = { build, update };
+})();
+
+
+
 (function TailSmoke(){
   let acc = 0; // frame accumulator
   function tick(doom){
@@ -3312,6 +3447,7 @@ if (forestP < 1) {
     if (window.__pgrade__)  window.__pgrade__.update(forestP);
     if (window.__rainbow__) window.__rainbow__.update(forestP);
     if (window.__fliers__)  window.__fliers__.update(forestP);
+    if (window.__stars__)   window.__stars__.update(forestP);
 
     // --- TRACTOR TAIL (0..1 only inside the tail) ---
     // tailT = 0 while in forest; grows 0→1 only after forest is done
@@ -3442,7 +3578,7 @@ if (window.__fog__?.boostTail) window.__fog__.boostTail(doom);
     if (window.__pgrade__)  window.__pgrade__.update(0);
     if (window.__rainbow__) window.__rainbow__.update(0);
     if (window.__fliers__)  window.__fliers__.update(0);
-
+if (window.__stars__)   window.__stars__.update(0); 
     // hide tractor if rewinding into forest
     if (window.__tractor__ && typeof window.__tractor__.updateTail === "function"){
       window.__tractor__.updateTail(0);
@@ -3469,13 +3605,14 @@ if (window.__fog__?.boostTail) window.__fog__.boostTail(doom);
     if (window.__pgrade__)  { window.__pgrade__.build();  window.__pgrade__.update(0); }
     if (window.__rainbow__)  window.__rainbow__.build();
     if (window.__fliers__)   window.__fliers__.build();
-
+ if (window.__stars__)   { window.__stars__.build();   window.__stars__.update(window.__currentProgress || 0); }
     const bg = document.getElementById("bg");
     if (bg){
       bringToFront(document.getElementById("bgSky"));   // z:1
       bringToFront(document.getElementById("bgSil"));   // z:1 (near silhouettes)
       bringToFront(document.getElementById("bgGrade")); // z:2 (tint/vignette)
       bringToFront(document.getElementById("bgCity"));
+        bringToFront(document.getElementById("bgStars")); 
       bringToFront(document.getElementById("bgFog"));   // z:6 (fog layers)
       bringToFront(document.getElementById("bgRays"));  // z:7 (smog = top)
     }
