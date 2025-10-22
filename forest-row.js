@@ -1907,11 +1907,7 @@ if (!router){
   document.body.appendChild(router);
 }
 
-function setRouterEnabled(on){
-  router.style.display = on ? "block" : "none";
-  if (!on) router.style.cursor = "default";
-  else     router.style.cursor = "crosshair";
-}
+
 
 function debugDot(x,y){
   const d = document.createElement("div");
@@ -2276,7 +2272,12 @@ near.addEventListener("click", onCityClick("near"), {passive:true});
     if (state.v < -MAX_VEL) state.v = -MAX_VEL;
     state.x += state.v * dt;
   }
-
+function setRouterEnabled(on){
+  const r = document.getElementById("cityClickRouter");
+  if (!r) return;
+  r.style.display = on ? "block" : "none";
+  r.style.cursor  = on ? "crosshair" : "default";
+}
   function startTicker(){
     if (tickerOn) return;
     tickerOn = true;
