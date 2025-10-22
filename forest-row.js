@@ -867,7 +867,7 @@ if (PERF.maDt > 26) PERF.bud = Math.max(0.15, PERF.bud - 0.12);
 else                PERF.bud = Math.min(1.00, PERF.bud + 0.06);
 
 // drive SMOKE + cadence from budget
-SMOKE.master = PERF.bud;
+SMOKE.master = Math.max(SMOKE.master ?? 0, PERF.bud);
 
 // downshift resolution and cadence under load
 const wantScale = PERF.exScaleMax - (PERF.exScaleMax - PERF.exScaleMin) * (1 - PERF.bud); // lower bud => lower res
@@ -2406,18 +2406,17 @@ function emitTractorExhaust(trRect){
   const y = trRect.cy + pipeOffsetY;
 
   // strength scales with speed but never goes to zero
-  const base = 0.45;                                // visible even when slow
-  const spdK = Math.min(1, __tractorSpeed / 12);    // ramps up fast
-  const strength = Math.min(1, base + spdK * 0.75);
-
+  const base = 0.18;                          // lighter baseline
+ const spdK = Math.min(1, __tractorSpeed / 14);
+ const strength = Math.min(1, base + spdK * 0.55);
   // temporarily bias smoke darker/thicker for exhaust look
   const prevLo = SMOKE.colorLo.slice(), prevHi = SMOKE.colorHi.slice();
   const prevStart = SMOKE.startR.slice(), prevFade = SMOKE.fade.slice();
 
   SMOKE.colorLo = [90, 90, 90];
   SMOKE.colorHi = [160,160,160];
-  SMOKE.startR  = [12, 30];              // a bit larger
-  SMOKE.fade    = [0.0014, 0.0028];      // lives longer
+ SMOKE.startR  = [9, 22];
+ SMOKE.fade    = [0.0025, 0.0040];    // lives longer
 
   spawnSmokePlume(x, y, strength);
 
@@ -2745,11 +2744,11 @@ function tractorRectInCanvas(){
 const SMOKE = {
   enabled: true,
   master: 1,
-  plumeCount: [6, 12],     // fewer, chunkier puffs
-  startR: [14, 30],        // larger initial circles
-  grow: [0.05, 0.10],      // slower growth → stays circular longer
-  fade: [0.0016, 0.0032],  // lingers a bit
-  blur: [1.8, 3.2],
+  plumeCount: [2, 5],         // fewer puffs per burst
+   startR: [8, 18],            // smaller circles
+   grow: [0.04, 0.08],         // gentler growth
+   fade: [0.003, 0.006],       // fade out faster
+   blur: [1.2, 2.2],
   vyUp: [-1.4, -0.6],
   vxDrift: [-0.4, 0.4],
   curl: 0.03,
@@ -2765,7 +2764,7 @@ function spawnSmokePlume(x, y, strength = 1){
 
   const m = (SMOKE.master ?? 1);
   if (m <= 0.15) return;
-  const s = Math.max(0, Math.min(1, strength)) * (m * m);
+const s = 0.8 * Math.max(0, Math.min(1, strength)) * (m * m);
 
   const n = randi(
     Math.max(4, Math.round(SMOKE.plumeCount[0] * s)),
@@ -2783,7 +2782,7 @@ function spawnSmokePlume(x, y, strength = 1){
       x: x + randf(-6, 6),
       y: y + randf(-4, 2),
       r: randf(SMOKE.startR[0], SMOKE.startR[1]) * (0.7 + s*0.6),
-      a: 0.22 + Math.random()*0.28,
+      a: 0.10 + Math.random()*0.18,
       vx: randf(SMOKE.vxDrift[0], SMOKE.vxDrift[1]) + (WIND?.x || 0)*0.4,
       vy: randf(SMOKE.vyUp[0], SMOKE.vyUp[1]),
       grow: randf(SMOKE.grow[0], SMOKE.grow[1]),
@@ -3453,16 +3452,27 @@ if (forestP < 1) {
     // --- TRACTOR TAIL (0..1 only inside the tail) ---
     // tailT = 0 while in forest; grows 0→1 only after forest is done
     const tailT = Math.max(0, Math.min(1, (p - FOREST_PORTION) / (1 - FOREST_PORTION)));
-    // Tractor exhaust: only when on-screen and actually moving
+
+
+// Tractor exhaust: whenever tractor is visible in tail (speed influences strength, not on/off)
 {
-  const tr = tractorRectInCanvas(); // uses your existing helper
-  if (tr && __tractorSpeed > 0.4 && (SMOKE.master ?? 1) > 0.02 && leafCanvas) {
+  const tr = tractorRectInCanvas();
+  const tractorVisible = !!tr; // you already return null if opacity ~0
+
+  if (tractorVisible && leafCanvas) {
     const now = performance.now();
-    if (now - window.__lastTrSmoke > 50) {       // ~20 plumes/sec max
-      const baseY   = leafCanvas.height - GROUND_RISE_PX - 4;
-      const backX   = tr.cx - (tr.dirX || 1) * 42; // a bit behind the tractor
-      const strength= Math.min(1, __tractorSpeed / 20); // faster → stronger
-      spawnSmokePlume(backX, baseY, strength);
+
+    // Cadence: steady baseline, quickens with speed
+    const speed = Math.max(0, __tractorSpeed || 0);
+    const gap   = 80 - 40 * Math.min(1, speed / 10); // 80ms → 40ms at speed
+
+    if (!window.__lastTrSmoke || now - window.__lastTrSmoke > gap) {
+      const baseY    = leafCanvas.height - GROUND_RISE_PX - 4;
+      const backX    = tr.cx - (tr.dirX || 1) * 42;
+      // Strength: never zero, scale with speed
+      const strength = Math.min(1, 0.25 + 0.75 * Math.min(1, speed / 12));
+
+   emitTractorExhaust({ cx: tr.cx, cy: baseY, dirX: tr.dirX || 1 });
       window.__lastTrSmoke = now;
     }
   }
@@ -3514,7 +3524,7 @@ const clearK = kTail;                // ← **TAIL ONLY**
 window.__airClear__ = clearK;        // 0..1 used by BackgroundFog.update
 
 // particle smoke follow the same factor (square for faster visual drop)
-SMOKE.master = 1 - (clearK * clearK);
+SMOKE.master = Math.max(SMOKE.master ?? 0, 0.18 + 0.82 * (1 - (clearK * clearK)));
 
 // hard stop any lingering smoke once basically gone
 if (SMOKE.master <= 0.01) {
