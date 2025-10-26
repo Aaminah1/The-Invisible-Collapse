@@ -3817,3 +3817,41 @@ window.addEventListener("resize", debounce(rebuildRows, 120));
     // anything else (sky/empty) → no-op (or do subtle dust if you want)
   }, {passive:true});
 })();
+// ---- BRIDGE: fade the trail out while fading lamps in near the end of forest
+// Tweak these two knobs to taste:
+const HANDOFF_START = 0.90; // start blending when forest progress ≥ 85%
+const HANDOFF_SPAN  = 0.18; // blend across final 15% (85% → 100%)
+
+gsap.set("#lampsScene", { autoAlpha: 0, yPercent: 5 });
+
+ScrollTrigger.create({
+  trigger: "#forestReveal",           // forest section (your existing section)
+  start:   "top top",
+  end:     "bottom top",              // runs for the whole pinned span
+  scrub:   true,
+  onUpdate: (self) => {
+    // map last HANDOFF_SPAN of forest to 0..1
+    const p = gsap.utils.clamp(
+      0, 1,
+      (self.progress - HANDOFF_START) / HANDOFF_SPAN
+    );
+
+    // fade out the trail pieces (ground + leaves + tractor layer)
+    gsap.to(["#ground", "#leafCanvas", "#tractorLayer"], {
+      autoAlpha: 1 - p,
+      overwrite: "auto",
+      duration: 0
+    });
+
+    // fade/slide lamps in BEFORE their own ScrollTrigger kicks in
+    gsap.to("#lampsScene", {
+      autoAlpha: p,
+      yPercent: 5 - 5*p,   // 5vh → 0
+      overwrite: "auto",
+      duration: 0
+    });
+  },
+  // when the forest pin releases, ensure lamps are fully on
+  onLeave:     () => gsap.set("#lampsScene", { autoAlpha: 1, yPercent: 0 }),
+  onEnterBack: () => gsap.set("#lampsScene", { autoAlpha: 0, yPercent: 5 })
+});

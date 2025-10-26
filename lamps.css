@@ -1,0 +1,62 @@
+/* Lamppost scene — scoped to avoid touching forest */
+#lampsScene{
+  position: relative;
+  width: 100vw;
+   min-height: 100vh;      /* full-screen pin like your other scenes */
+  overflow: hidden;
+  background: transparent;
+   opacity: 0;
+  transform: translateY(5vh);
+  will-change: opacity, transform;
+  z-index: 2; 
+}
+
+
+#lampsGroundBase{
+  position:absolute; left:0; bottom:0;
+  width:100vw; z-index:4;
+}
+
+/* stacked ground fades (5→8) */
+#lampsGroundStack{
+  position:absolute; inset:0; z-index:4; pointer-events:none;
+}
+#lampsGroundStack img.ground{
+  position:absolute; left:0; right:0; bottom:0;
+  width:100vw; height:auto; object-fit:cover;
+  opacity:0; will-change:opacity;
+}
+
+/* lampposts */
+#lampsRow{
+  position:absolute; inset:0; z-index:5; pointer-events:none;
+}
+#lampsRow .lampWrap{
+  position:absolute; bottom:0;
+  transform:translateX(-50%);
+  display:flex; align-items:flex-end;
+  height:var(--lampH);                /* set via JS */
+  transform-origin:bottom center;
+}
+#lampsRow .lamp{
+  position:absolute; left:50%; bottom:0; transform:translateX(-50%);
+  width:auto; max-height:100%;
+  opacity:0; pointer-events:none;
+  filter:drop-shadow(0 6px 16px rgba(0,0,0,.35));
+}
+
+/* subtle scroll hint */
+#lampsScene .lampsHint{
+  position:absolute; left:50%; bottom:6vh; transform:translateX(-50%);
+  font:600 13px/1.2 system-ui, sans-serif;
+  letter-spacing:.08em; text-transform:uppercase;
+  color:#222; opacity:.75; z-index:7; pointer-events:none;
+  animation: lampsHintPulse 1.6s ease-in-out infinite alternate;
+}
+@keyframes lampsHintPulse{
+  from{transform:translateX(-50%) translateY(0);   opacity:.75;}
+  to  {transform:translateX(-50%) translateY(-6px);opacity:1;}
+}
+
+/* shared knob for size (mirrors your --forestSizeMult) */
+:root{ --citySizeMult: 1.35; }
