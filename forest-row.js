@@ -2455,21 +2455,19 @@ function emitTractorExhaust(trRect){
   let movingLeft = null;
   let haveDirection = false;
   let armed = false;
-
-  function jitter(el, times=6, amp=1.4, dur=0.04){
-    const tl = gsap.timeline();
-    for (let i=0;i<times;i++){
-      tl.to(el, {
-        x:(Math.random()-0.5)*amp,
-        y:(Math.random()-0.5)*amp,
-        rotation:(Math.random()-0.5)*1.2,
-        duration:dur,
-        ease:"sine.inOut"
-      });
-    }
-    tl.to(el, { x:0, y:0, rotation:0, duration:dur*0.8, ease:"sine.out" });
-    return tl;
+function jitterInPlace(el, times=5, rotDeg=1.0, dur=0.035){
+  const tl = gsap.timeline();
+  for (let i=0;i<times;i++){
+    tl.to(el, {
+      rotation: (Math.random()-0.5) * rotDeg, // rotation only
+      duration: dur,
+      ease: "sine.inOut"
+    });
   }
+  tl.to(el, { rotation: 0, duration: dur*0.8, ease: "sine.out" });
+  return tl;
+}
+
 
   function forestBandX(){
     const bases = [...document.querySelectorAll("#forestReveal .tree-wrap .tree, #forestReveal .tree-wrap .tree-back")];
@@ -2509,145 +2507,144 @@ function emitTractorExhaust(trRect){
 
 
  
+function cullTree(wrap){
+  if (!wrap || wrap.dataset.gone === "1" || wrap.dataset.gone === "2") return;
+  wrap.dataset.gone = "1";
 
-  // 🔄 REPLACEMENT STARTS HERE
-  function cullTree(wrap){
-    if (!wrap || wrap.dataset.gone === "1") return;
-    wrap.dataset.gone = "1";
-// per-tree burst guards (init here where wrap exists)
-    if (wrap.__burstEarly   == null) wrap.__burstEarly   = false;
-    if (wrap.__burstImpact  == null) wrap.__burstImpact  = false;
-    const idx    = parseInt(wrap.dataset.idx || "0", 10);
-    const kids   = wrap.querySelectorAll(".tree, .tree-back, .tree-stage");
-    const base   = wrap.querySelector(".tree, .tree-back");
-    const shadow = wrap.querySelector(".shadow-oval");
+  // per-tree burst guards (init here where wrap exists)
+  if (wrap.__burstEarly   == null) wrap.__burstEarly   = false;
+  if (wrap.__burstImpact  == null) wrap.__burstImpact  = false;
 
-    // debris you already had
-    if (typeof spawnDustFall === "function") spawnDustFall(idx, 24);
-    const rect = TREE_RECTS[idx] || TREE_RECTS[0];
-    for (let k=0;k<3;k++) setTimeout(()=>spawnDustPuff(rect), k*80);
+  const idx    = parseInt(wrap.dataset.idx || "0", 10);
+  const kids   = wrap.querySelectorAll(".tree, .tree-back, .tree-stage");
+  const base   = wrap.querySelector(".tree, .tree-back");
+  const shadow = wrap.querySelector(".shadow-oval");
 
-    // pointer off
-    gsap.set(wrap, { pointerEvents: "none" });
+  // debris you already had
+  if (typeof spawnDustFall === "function") spawnDustFall(idx, 24);
+  const rect = TREE_RECTS[idx] || TREE_RECTS[0];
+  for (let k=0;k<3;k++) setTimeout(()=>spawnDustPuff(rect), k*80);
 
-    // hinge at base
-    gsap.set(wrap, { transformOrigin:"50% 100%" });
-    kids.forEach(k => gsap.set(k, { transformOrigin:"50% 100%" }));
+  // pointer off
+  gsap.set(wrap, { pointerEvents: "none" });
 
-    const dirAway = (movingLeft === true) ? +1 : -1; // +1 = fall right, -1 = fall left
+  // ✅ Pivot close to the stump so rotation stays “in place”
+  gsap.set(wrap, { transformOrigin:"50% 98%" });
+  kids.forEach(k => gsap.set(k, { transformOrigin:"50% 98%" }));
 
-    const tl = gsap.timeline({
-      onComplete(){
-        // ensure fully invisible after the act
-        gsap.set(kids, { opacity: 0, filter: `blur(${BLUR_PX}px)` });
-      }
-    });
+  const dirAway = (movingLeft === true) ? +1 : -1; // +1 = fall right, -1 = fall left
 
-    // 1) chainsaw buzz
-    tl.add(jitter(wrap, 6, 1.6, 0.035));
-
-    // 2) micro pre-tip (away from nose)
-    tl.to(wrap, {
-      rotation: dirAway * TOPPLE.tip1,
-      y: -TOPPLE.preLift,
-      duration: TOPPLE.tPre,
-      ease: "power2.out"
-    });
-
-    // 3) commit the lean (start sliding & lowering a bit)
-    tl.to(wrap, {
-      rotation: dirAway * (TOPPLE.tip1 + TOPPLE.hinge1),
-      x: `+=${dirAway * TOPPLE.xDrift1}`,
-      y: `+=${TOPPLE.drop1}`,
-      duration: TOPPLE.tLean1,
-      ease: "power2.in"
-    });
-// early burst (twig + dust) right as the lean commits
-tl.add(() => {
-   if (!wrap.__burstEarly) {
-     wrap.__burstEarly = true;
-const cEarly = Math.floor(rand(TWIG_CONFIG.burstEarly[0], TWIG_CONFIG.burstEarly[1] + 1));
-   spawnTwigBurstAtTree(idx, cEarly);
-      for (let i=0;i<3;i++) setTimeout(()=>spawnDustPuff(rect), i*90);
-   }
- }, "-=0.10");
-
-
-    // 4) accelerate into the fall (bigger rotation + drift + drop)
-    tl.to(wrap, {
-      rotation: dirAway * TOPPLE.finalRot,
-      x: `+=${dirAway * (TOPPLE.xDrift2 - TOPPLE.xDrift1)}`,
-      y: `+=${TOPPLE.drop2 - TOPPLE.drop1}`,
-      duration: TOPPLE.tLean2,
-      ease: "power4.in"
-    }, "<");
-
-    // shadow stretches & fades during fall
-    if (shadow){
-      tl.to(shadow, {
-        opacity: 0.10,
-        scaleX: 1.2,
-        scaleY: 0.7,
-        duration: TOPPLE.tLean1 + TOPPLE.tLean2,
-        ease: "power2.inOut"
-      }, "<");
+  const tl = gsap.timeline({
+    onComplete(){
+        wrap.dataset.gone = "2";            
+      gsap.set(kids, { opacity: 0, filter: `blur(${BLUR_PX}px)` });
     }
+  });
 
-    // slight blur ramp on sprites as they move fast / out of focus
-    tl.to(kids, {
-      filter: `blur(${BLUR_PX}px)`,
-      duration: TOPPLE.tLean2 * 0.8,
-      ease: "power2.in"
-    }, "<+0.05");
+  // 1) chainsaw buzz (reduced amplitude to avoid visible drift)
+tl.add(jitterInPlace(wrap, 5, 1.0, 0.035));
 
-    // 5) impact bounce (tiny)
-    tl.to(wrap, {
-      y: `+=${TOPPLE.bounceY}`,
-      rotation: `+=${dirAway * TOPPLE.bounceRot}`,
-      duration: 0.18,
-      ease: "bounce.out",
-      onStart(){
-        // dusty thump
-        if (typeof spawnDustPuff === "function") {
-          const r = TREE_RECTS[idx] || TREE_RECTS[0];
-          for (let i=0;i<2;i++) setTimeout(()=>spawnDustPuff(r), i*80);
-        }
-        // shake the sprite a hair on impact
-        gsap.fromTo(wrap, { x: `+=${dirAway*1.2}` }, { x: `-=${dirAway*1.2}`, duration: 0.08, yoyo:true, repeat:3, ease:"sine.inOut" });
-      }
-    });
-tl.add(() => {
-  const r = TREE_RECTS[idx] || TREE_RECTS[0];
-  if (!r || !leafCanvas) return;
-  // drop a couple of larger stains
-  for (let i=0;i<2;i++){
-    addGroundPatch(
-      (r.x1+r.x2)/2 + rand(-40, 40),
-      leafCanvas.height - GROUND_RISE_PX + rand(-2, 2),
-      { w: rand(60,110), h: rand(24,42), a: rand(0.10,0.18) }
-    );
-  }
-}, "<+0.02");
+  // 2) micro pre-tip (away from nose) — no x drift
+  tl.to(wrap, {
+    rotation: dirAway * TOPPLE.tip1,
+    y: -TOPPLE.preLift,
+    duration: TOPPLE.tPre,
+    ease: "power2.out"
+  });
 
+  // 3) commit the lean — ❌ remove lateral slide; keep drop
+  tl.to(wrap, {
+    rotation: dirAway * (TOPPLE.tip1 + TOPPLE.hinge1),
+    // x: `+=${dirAway * TOPPLE.xDrift1}`,   // removed
+    y: `+=${TOPPLE.drop1}`,
+    duration: TOPPLE.tLean1,
+    ease: "power2.in"
+  });
 
-  // 6) impact burst → TWIGS + dust (no leaves)
-
- tl.add(() => {
-   if (!wrap.__burstImpact) {
-     wrap.__burstImpact = true;
-const cImpact = Math.floor(rand(TWIG_CONFIG.burstImpact[0], TWIG_CONFIG.burstImpact[1] + 1));
-  spawnTwigBurstAtTree(idx, cImpact);
+  // early burst (twig + dust) right as the lean commits
+  tl.add(() => {
+    if (!wrap.__burstEarly) {
+      wrap.__burstEarly = true;
+      const cEarly = Math.floor(rand(TWIG_CONFIG.burstEarly[0], TWIG_CONFIG.burstEarly[1] + 1));
+      spawnTwigBurstAtTree(idx, cEarly);
       for (let i=0;i<3;i++) setTimeout(()=>spawnDustPuff(rect), i*90);
-   }
- }, "<");
+    }
+  }, "-=0.10");
 
+  // 4) accelerate into the fall — ❌ no extra x drift; keep rotation + drop
+  tl.to(wrap, {
+    rotation: dirAway * TOPPLE.finalRot,
+    // x: `+=${dirAway * (TOPPLE.xDrift2 - TOPPLE.xDrift1)}`, // removed
+    y: `+=${TOPPLE.drop2 - TOPPLE.drop1}`,
+    duration: TOPPLE.tLean2,
+    ease: "power4.in"
+  }, "<");
 
-
-    // 7) fade out while it settles out of frame
-    tl.to(kids, { opacity: 0, duration: TOPPLE.tFade, ease: "power1.in" }, "+=0.05");
-    if (shadow) tl.to(shadow, { opacity: 0, duration: TOPPLE.tFade*0.9, ease: "power1.in" }, "<+0.05");
+  // shadow stretches & fades during fall (unchanged)
+  if (shadow){
+    tl.to(shadow, {
+      opacity: 0.10,
+      scaleX: 1.2,
+      scaleY: 0.7,
+      duration: TOPPLE.tLean1 + TOPPLE.tLean2,
+      ease: "power2.inOut"
+    }, "<");
   }
-  // 🔄 REPLACEMENT ENDS HERE
+
+  // slight blur ramp as it moves fast / out of focus (unchanged)
+  tl.to(kids, {
+    filter: `blur(${BLUR_PX}px)`,
+    duration: TOPPLE.tLean2 * 0.8,
+    ease: "power2.in"
+  }, "<+0.05");
+
+  // 5) impact bounce — keep tiny rotation, switch impact shake to Y so it doesn't “walk” sideways
+  tl.to(wrap, {
+    y: `+=${TOPPLE.bounceY}`,
+    rotation: `+=${dirAway * TOPPLE.bounceRot}`,
+    duration: 0.18,
+    ease: "bounce.out",
+    onStart(){
+      // dusty thump
+      if (typeof spawnDustPuff === "function") {
+        const r = TREE_RECTS[idx] || TREE_RECTS[0];
+        for (let i=0;i<2;i++) setTimeout(()=>spawnDustPuff(r), i*80);
+      }
+      // shake vertically instead of x so it stays in place
+      gsap.fromTo(wrap, { y: "+=1.2" }, { y: "-=1.2", duration: 0.08, yoyo:true, repeat:3, ease:"sine.inOut" });
+    }
+  });
+
+  // ground stains (unchanged)
+  tl.add(() => {
+    const r = TREE_RECTS[idx] || TREE_RECTS[0];
+    if (!r || !leafCanvas) return;
+    for (let i=0;i<2;i++){
+      addGroundPatch(
+        (r.x1+r.x2)/2 + rand(-40, 40),
+        leafCanvas.height - GROUND_RISE_PX + rand(-2, 2),
+        { w: rand(60,110), h: rand(24,42), a: rand(0.10,0.18) }
+      );
+    }
+  }, "<+0.02");
+
+  // 6) impact burst → TWIGS + dust (unchanged)
+  tl.add(() => {
+    if (!wrap.__burstImpact) {
+      wrap.__burstImpact = true;
+      const cImpact = Math.floor(rand(TWIG_CONFIG.burstImpact[0], TWIG_CONFIG.burstImpact[1] + 1));
+      spawnTwigBurstAtTree(idx, cImpact);
+      for (let i=0;i<3;i++) setTimeout(()=>spawnDustPuff(rect), i*90);
+    }
+  }, "<");
+
+  // 7) fade out while it settles (unchanged)
+  tl.to(kids, { opacity: 0, duration: TOPPLE.tFade, ease: "power1.in" }, "+=0.05");
+  if (shadow) tl.to(shadow, { opacity: 0, duration: TOPPLE.tFade*0.9, ease: "power1.in" }, "<+0.05");
+}
+
+ 
+
 
   function loop(){
     const nose = tractorNose();

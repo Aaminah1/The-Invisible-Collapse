@@ -148,7 +148,7 @@
 /* === Ground layer (Stage 0) === */
 #forestReveal { position: relative; } /* ensure absolute children anchor */
 /* Once culled in the tail, never render again (until reset) */
-#forestReveal .tree-wrap[data-gone="1"] { display: none !important; }
+#forestReveal .tree-wrap[data-gone="2"] { display: none !important; }
 
 #ground{
   position: absolute;
