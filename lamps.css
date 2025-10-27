@@ -45,18 +45,28 @@
   filter:drop-shadow(0 6px 16px rgba(0,0,0,.35));
 }
 
-/* subtle scroll hint */
-#lampsScene .lampsHint{
-  position:absolute; left:50%; bottom:6vh; transform:translateX(-50%);
-  font:600 13px/1.2 system-ui, sans-serif;
-  letter-spacing:.08em; text-transform:uppercase;
-  color:#222; opacity:.75; z-index:7; pointer-events:none;
-  animation: lampsHintPulse 1.6s ease-in-out infinite alternate;
-}
-@keyframes lampsHintPulse{
-  from{transform:translateX(-50%) translateY(0);   opacity:.75;}
-  to  {transform:translateX(-50%) translateY(-6px);opacity:1;}
-}
+
 
 /* shared knob for size (mirrors your --forestSizeMult) */
 :root{ --citySizeMult: 1.35; }
+/* Near parallax sits above ground, below lamps */
+#parallaxNearStack{
+  position:absolute; left:0; right:0; bottom:0;
+  z-index:2; pointer-events:none;
+  /* Height = viewport width / aspect ratio (AR is set by JS from the ref image) */
+  height: calc(100vw / var(--nearAR, 2.40)); /* 2.40 is a safe fallback */
+}
+
+/* Each near-city image fills width, bottom anchored, and cross-fades */
+#parallaxNearStack img{
+  position:absolute; left:50%; bottom:0;
+  transform: translateX(-50%);
+  width:100%; height:auto;      /* preserve ref geometry */
+  opacity:0; will-change: opacity, transform;
+}
+
+/* (Already present) stacking order reminder */
+#lampsGroundBase  { z-index:1; }
+#parallaxNearStack{ z-index:2; }
+#lampsGroundStack { z-index:3; }
+#lampsRow         { z-index:4; }
