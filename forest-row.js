@@ -1896,7 +1896,7 @@ fade: 0.04 + Math.random()*0.015,
 
     // your tiling art
     back.style.backgroundImage = 'url("images/constructioncity_far.png")';
-    mid .style.backgroundImage = 'url("images/constructioncityy_mid.png")';
+    mid .style.backgroundImage = 'url("images/constructioncity_mid.png")';
     near.style.backgroundImage = 'url("images/constructioncity_near.png")';
 // after back/mid/near exist & have images…
 /* ===== City click router (only active while city is visible) ===== */

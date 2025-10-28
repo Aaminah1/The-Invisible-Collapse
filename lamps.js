@@ -24,6 +24,14 @@ const NEAR_SRC = [
   "images/city4.png" // placeholder
 ];
 
+/* Far city layers (your new grayscale sequence) */
+const FAR_SRC = [
+  "images/cityfar_1.png",
+  "images/cityfar_2.png",
+  "images/cityfar_3.png",
+  "images/cityfar_4.png"
+];
+
 /* Reference to size near stack exactly like old art */
 const NEAR_REF = "images/constructioncity_near.png";
 
@@ -91,6 +99,11 @@ function buildNearParallax(){
   buildStack("parallaxNearStack", "near", NEAR_SRC);
 }
 
+function buildFarParallax(){
+  buildStack("parallaxFarStack", "far", FAR_SRC);
+}
+
+
 function buildLampRow(n = 5){
   const row = document.getElementById("lampsRow");
   row.innerHTML = "";
@@ -146,6 +159,7 @@ function buildCrossfade(){
     fadeLamps(t, i, i + 1);
     fadeContainer(t, "#lampsGroundStack",  "ground", i, i + 1);
     fadeContainer(t, "#parallaxNearStack", "near",   i, i + 1);
+    fadeContainer(t, "#parallaxFarStack",  "far",    i, i + 1); 
   }
   return tl;
 }
@@ -157,6 +171,7 @@ preload(ALL).then(async () => {
   await setNearAspectFromRef();   // ensure same size as constructioncity_near
 
   buildGroundStack();
+    buildFarParallax();
   buildNearParallax();
   buildLampRow(5);
 
@@ -174,6 +189,7 @@ preload(ALL).then(async () => {
       xfade.progress(self.progress);
       // ensure no positional drift
       gsap.set("#parallaxNearStack", { x: 0 });
+       gsap.set("#parallaxFarStack",  { x: 0 });
     },
     invalidateOnRefresh: true,
     onRefreshInit(){ xfade.progress(0); }
