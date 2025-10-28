@@ -6,14 +6,16 @@ const LAMP_SRC = [
   "images/lampost1.png",
   "images/lampost2.png",
   "images/lampost3.png",
-  "images/lampost4.png"
+  "images/lampost4.png",
+    "images/lampost5.png"
 ];
 
 const GROUND_SRC = [
   "images/ground_stage5.png",
   "images/ground_stage6.png",
   "images/ground_stage7.png",
-  "images/ground_stage8.png"
+  "images/ground_stage8.png",
+  "images/ground_stage9.png"
 ];
 
 /* Near city layers (replace last when ready) */
@@ -21,7 +23,8 @@ const NEAR_SRC = [
   "images/city1.png",
   "images/city2.png",
   "images/city3.png",
-  "images/city4.png" // placeholder
+  "images/city4.png" ,
+  "images/city5.png"
 ];
 
 /* Far city layers (your new grayscale sequence) */
@@ -29,7 +32,8 @@ const FAR_SRC = [
   "images/cityfar_1.png",
   "images/cityfar_2.png",
   "images/cityfar_3.png",
-  "images/cityfar_4.png"
+  "images/cityfar_4.png",
+  "images/cityfar_5.png"
 ];
 
 /* Reference to size near stack exactly like old art */
