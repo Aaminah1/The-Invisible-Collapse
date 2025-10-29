@@ -55,12 +55,12 @@ const LITTER_PACKS = {
     "images/litter/moderncoffee.png",
     "images/litter/chippacket.png",
     "images/litter/tupperware.png",
-     "images/litter/waterbottle.png",
+    "images/litter/waterbottle.png",
     "images/litter/plasticpacke.png",
     "images/litter/colorcan.png",
     "images/litter/wine.png",
     "images/litter/mask.png",
-     "images/litter/waterbottle.png",
+    "images/litter/waterbottle.png",
     "images/litter/plasticpacke.png",
     "images/litter/colorcan.png",
     "images/litter/wine.png",
@@ -77,13 +77,45 @@ const LITTER_PACKS = {
 const LITTER_PACK_DEFAULT = ["images/litter/trash.png", "images/litter/rock.png"];
 const LITTER_ALL = [...new Set([...LITTER_PACK_DEFAULT, ...Object.values(LITTER_PACKS).flat()])];
 
+/* ---------- PER-ITEM PHYSICS ---------- */
+// per-basename tuning (defaults at bottom)
+const ITEM_PHYS = {
+  // ultra-light paperish
+  "paper":        { g:0.40, air:0.025, turb:0.90, lift:0.018, spin:1.20, groundFriction:0.90, rotFriction:0.94, impact:0.55, cursor:1.75 },
+  "receipt":      { g:0.42, air:0.026, turb:0.95, lift:0.020, spin:1.15, groundFriction:0.90, rotFriction:0.94, impact:0.55, cursor:1.75 },
+  "trash":        { g:0.55, air:0.020, turb:0.70, lift:0.010, spin:1.00, groundFriction:0.92, rotFriction:0.95, impact:0.60, cursor:1.30 },
+
+  // light plastics / masks
+  "mask":         { g:0.60, air:0.022, turb:0.85, lift:0.014, spin:1.10, groundFriction:0.92, rotFriction:0.95, impact:0.60, cursor:1.50 },
+  "plasticpacke": { g:0.65, air:0.020, turb:0.75, lift:0.012, spin:1.00, groundFriction:0.93, rotFriction:0.95, impact:0.62, cursor:1.40 },
+  "chippacket":   { g:0.68, air:0.020, turb:0.80, lift:0.013, spin:1.05, groundFriction:0.93, rotFriction:0.95, impact:0.62, cursor:1.40 },
+
+  // medium takeaway / bottles / cups / tubs
+  "moderncoffee": { g:0.95, air:0.012, turb:0.45, lift:0.004, spin:0.80, groundFriction:0.94, rotFriction:0.96, impact:0.70, cursor:1.00 },
+  "coffee":       { g:1.00, air:0.012, turb:0.45, lift:0.004, spin:0.80, groundFriction:0.94, rotFriction:0.96, impact:0.70, cursor:1.00 },
+  "tupperware":   { g:1.05, air:0.011, turb:0.40, lift:0.003, spin:0.75, groundFriction:0.94, rotFriction:0.96, impact:0.72, cursor:0.95 },
+  "waterbottle":  { g:1.10, air:0.010, turb:0.38, lift:0.002, spin:0.70, groundFriction:0.95, rotFriction:0.96, impact:0.74, cursor:0.90 },
+
+  // heavy cans / glass / rocks
+  "colorcan":     { g:1.30, air:0.008, turb:0.28, lift:0.001, spin:0.55, groundFriction:0.96, rotFriction:0.97, impact:0.80, cursor:0.70 },
+  "wine":         { g:1.55, air:0.007, turb:0.22, lift:0.000, spin:0.45, groundFriction:0.97, rotFriction:0.975, impact:0.85, cursor:0.55 },
+  "rock":         { g:1.60, air:0.006, turb:0.18, lift:0.000, spin:0.40, groundFriction:0.975,rotFriction:0.98,  impact:0.88, cursor:0.50 },
+};
+// sensible defaults if a key is missing
+const DEFAULT_PHYS = { g:0.90, air:0.014, turb:0.55, lift:0.002, spin:1.00, groundFriction:0.94, rotFriction:0.96, impact:0.70, cursor:1.00 };
+// helper to turn "images/litter/waterbottle.png" → "waterbottle"
+function keyFromSrc(src=""){
+  const m = src.match(/([^\/]+)\.(png|jpg|jpeg|webp|gif)$/i);
+  return m ? m[1].toLowerCase() : "unknown";
+}
+
 /* ========= LAMPS: litter sprites (leaf-style canvas), NO FADING ========= */
 (() => {
   // physics/feel
-  const GRAVITY = 0.018;
+  const GRAVITY = 0.018; // base multiplier (scaled by per-item phys.g)
   const WIND_K  = 0.01;
-  const FRICTION = 0.94;        // ground slide damping per frame
-  const ROT_FRICTION = 0.96;    // slow spin while sliding
+  const FRICTION = 0.94;        // (kept as a fallback)
+  const ROT_FRICTION = 0.96;    // (kept as a fallback)
   const STOP_EPS = 0.03;        // stop threshold for vx
   const MAX_PARTS = 520;        // allow larger pile
   const SIZE_RANGE = [28, 48];
@@ -108,7 +140,7 @@ const LITTER_ALL = [...new Set([...LITTER_PACK_DEFAULT, ...Object.values(LITTER_
   const rand = (a, b) => a + Math.random() * (b - a);
   const pick = arr => arr[(Math.random() * arr.length) | 0];
 
-  // Preload litter into the per-scene bank
+  // Preload litter into the per-scene bank (store {img,key})
   function preloadSprites() {
     const all = [...LITTER_ALL];
     return Promise.all(
@@ -120,9 +152,13 @@ const LITTER_ALL = [...new Set([...LITTER_PACK_DEFAULT, ...Object.values(LITTER_
     ).then(pairs => {
       const map = new Map(pairs); // src → image
       [0,1,2].forEach(k => {
-        SPRITE_BANK[k] = (LITTER_PACKS[k] || []).map(s => map.get(s)).filter(Boolean);
+        SPRITE_BANK[k] = (LITTER_PACKS[k] || [])
+          .map(s => ({ img: map.get(s), key: keyFromSrc(s) }))
+          .filter(o => o.img);
       });
-      SPRITE_BANK.default = LITTER_PACK_DEFAULT.map(s => map.get(s)).filter(Boolean);
+      SPRITE_BANK.default = LITTER_PACK_DEFAULT
+        .map(s => ({ img: map.get(s), key: keyFromSrc(s) }))
+        .filter(o => o.img);
     });
   }
 
@@ -150,32 +186,32 @@ const LITTER_ALL = [...new Set([...LITTER_PACK_DEFAULT, ...Object.values(LITTER_
   function cacheGroundLine() {
     groundY = null;
     if (!canvas) return;
-
-    // Prefer the stacked ground; fall back to the base image if needed
     const g = document.getElementById('lampsGroundStack') || document.getElementById('lampsGroundBase');
     if (!g) return;
 
     const cb = canvas.getBoundingClientRect();
     const gb = g.getBoundingClientRect();
-
-    // Use the *bottom* edge so items land on visible ground
-    groundY = (gb.bottom - cb.top) + GROUND_OFFSET;
+    groundY = (gb.bottom - cb.top) + GROUND_OFFSET; // bottom edge
   }
 
   function pickSpriteForScene(sceneIdx){
     const bank = (SPRITE_BANK[sceneIdx] && SPRITE_BANK[sceneIdx].length)
       ? SPRITE_BANK[sceneIdx]
       : SPRITE_BANK.default;
-    return bank[(Math.random() * bank.length) | 0] || null;
+    return bank[(Math.random() * bank.length) | 0] || null; // {img,key}
   }
 
-  function addPart(x, y, vx, vy, img) {
+  function addPart(x, y, vx, vy, sprite) {
     // Try not to delete settled pieces
     if (parts.length >= MAX_PARTS) {
       const idx = parts.findIndex(p => !p.settled);
       if (idx >= 0) parts.splice(idx, 1);
       else parts.shift();
     }
+
+    const img = sprite?.img || null;
+    const key = sprite?.key || "unknown";
+    const phys = { ...DEFAULT_PHYS, ...(ITEM_PHYS[key] || {}) };
 
     const target = rand(SIZE_RANGE[0], SIZE_RANGE[1]);
     let w = 18, h = 14;
@@ -190,10 +226,11 @@ const LITTER_ALL = [...new Set([...LITTER_PACK_DEFAULT, ...Object.values(LITTER_
     parts.push({
       x, y, vx, vy,
       rot: rand(-Math.PI, Math.PI),
-      spin: rand(-0.015, 0.015),
+      spin: rand(-0.015, 0.015) * phys.spin,
       img, w, h,
       flip: Math.random() < 0.35 ? -1 : 1,
-      settled: false
+      settled: false,
+      phys, key
     });
   }
 
@@ -204,7 +241,7 @@ const LITTER_ALL = [...new Set([...LITTER_PACK_DEFAULT, ...Object.values(LITTER_
     const W = canvas.width;
 
     for (let i = 0; i < count; i++) {
-      const img = pickSpriteForScene(sceneIdx);
+      const sprite = pickSpriteForScene(sceneIdx);
 
       // sometimes ignore lamps completely → breaks the columns
       if (Math.random() < FREEFALL_CHANCE) {
@@ -212,7 +249,7 @@ const LITTER_ALL = [...new Set([...LITTER_PACK_DEFAULT, ...Object.values(LITTER_
         const y = rand(-SKY_SPAWN_PAD, 0);               // from the sky
         const vx = rand(-0.5, 0.5) + (sceneIdx ? BASE_WIND_SCENE1 : BASE_WIND_SCENE0);
         const vy = rand(0.6, 1.2);
-        addPart(x, y, vx, vy, img);
+        addPart(x, y, vx, vy, sprite);
         continue;
       }
 
@@ -232,7 +269,7 @@ const LITTER_ALL = [...new Set([...LITTER_PACK_DEFAULT, ...Object.values(LITTER_
       const vx = rand(-0.6, 0.6) + (sceneIdx ? BASE_WIND_SCENE1 : BASE_WIND_SCENE0);
       const vy = rand(0.5, 1.15);
 
-      addPart(x, y, vx, vy, img);
+      addPart(x, y, vx, vy, sprite);
     }
   };
 
@@ -243,71 +280,77 @@ const LITTER_ALL = [...new Set([...LITTER_PACK_DEFAULT, ...Object.values(LITTER_
     return Math.sin((x + __turbTick) * 0.007) * 0.7 +
            Math.sin((y - __turbTick * 0.6) * 0.013) * 0.3;
   }
-/* ---------- USER INTERACTION (drag / flick) ---------- */
-/* ---------- USER INTERACTION (drag / flick) ---------- */
-let dragging = false;
-let lastX = 0, lastY = 0;
 
+  /* ---------- USER INTERACTION (drag / hover) ---------- */
+  let dragging = false;
+  let lastX = 0, lastY = 0;
 
+  function handleMove(e) {
+    if (!dragging) return;
+    const rect = canvas.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+    const dx = x - lastX;
+    const dy = y - lastY;
+    lastX = x;
+    lastY = y;
 
-function handleMove(e) {
-  if (!dragging) return;
-  const rect = canvas.getBoundingClientRect();
-  const x = e.clientX - rect.left;
-  const y = e.clientY - rect.top;
-  const dx = x - lastX;
-  const dy = y - lastY;
-  lastX = x;
-  lastY = y;
+    const influenceRadius = 140;
+    const impulseStrength = 0.45;
 
-  const influenceRadius = 140;
-  const impulseStrength = 0.45;
+    for (let i = 0; i < parts.length; i++) {
+      const p = parts[i];
+      const distX = p.x - x;
+      const distY = p.y - y;
+      const d2 = distX*distX + distY*distY;
+      if (d2 < influenceRadius * influenceRadius) {
+        const falloff = 1 - Math.sqrt(d2) / influenceRadius;
 
-  for (let i = 0; i < parts.length; i++) {
-    const p = parts[i];
-    const distX = p.x - x;
-    const distY = p.y - y;
-    const d2 = distX*distX + distY*distY;
-    if (d2 < influenceRadius * influenceRadius) {
-      const falloff = 1 - Math.sqrt(d2) / influenceRadius;
+        p.settled = false;
+        const mult = (p.phys?.cursor ?? 1.0);
 
-      // Allow moving even settled pieces
-      p.settled = false;
-
-      p.vx += dx * impulseStrength * falloff * 0.03;
-      p.vy += dy * impulseStrength * falloff * 0.03;
-      p.spin += (Math.random() - 0.5) * 0.04;
+        p.vx  += dx * impulseStrength * falloff * 0.03 * mult;
+        p.vy  += dy * impulseStrength * falloff * 0.03 * mult;
+        p.spin += (Math.random() - 0.5) * 0.04 * (p.phys?.spin ?? 1.0);
+      }
     }
   }
-}
-function handleHoverMove(e) {
-  const rect = canvas.getBoundingClientRect();
-  const x = e.clientX - rect.left;
-  const y = e.clientY - rect.top;
 
-  const influenceRadius = 160;   // hover reach (can adjust)
-  const impulseStrength = 0.25;  // motion amount (smaller = gentler)
+  function handleHoverMove(e) {
+    const rect = canvas.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
 
-  for (let i = 0; i < parts.length; i++) {
-    const p = parts[i];
-    const dx = p.x - x;
-    const dy = p.y - y;
-    const d2 = dx * dx + dy * dy;
-    if (d2 < influenceRadius * influenceRadius) {
-      const falloff = 1 - Math.sqrt(d2) / influenceRadius;
-      p.settled = false;
-      p.vx += dx * impulseStrength * falloff * -0.03; // push away slightly
-      p.vy += dy * impulseStrength * falloff * -0.03;
-      p.spin += (Math.random() - 0.5) * 0.02;
+    const influenceRadius = 160;   // hover reach
+    const impulseStrength = 0.25;  // gentler than drag
+
+    for (let i = 0; i < parts.length; i++) {
+      const p = parts[i];
+      const dx = p.x - x;
+      const dy = p.y - y;
+      const d2 = dx * dx + dy * dy;
+      if (d2 < influenceRadius * influenceRadius) {
+        const falloff = 1 - Math.sqrt(d2) / influenceRadius;
+        p.settled = false;
+        const mult = (p.phys?.cursor ?? 1.0);
+
+        // repel slightly
+        p.vx  += dx * impulseStrength * falloff * -0.03 * mult;
+        p.vy  += dy * impulseStrength * falloff * -0.03 * mult;
+        p.spin += (Math.random() - 0.5) * 0.02 * (p.phys?.spin ?? 1.0);
+      }
     }
   }
-}
 
+  function enableLitterDrag() {
+    // optional full drag (press to “grab”): uncomment if you want it
+    // canvas.addEventListener("mousedown", (e)=>{ dragging = true; const r=canvas.getBoundingClientRect(); lastX=e.clientX-r.left; lastY=e.clientY-r.top; canvas.classList.add("dragging"); });
+    // window.addEventListener("mouseup", ()=>{ dragging=false; canvas.classList.remove("dragging"); });
+    // window.addEventListener("mousemove", handleMove);
 
-function enableLitterDrag() {
-canvas.addEventListener("mousemove", handleHoverMove);
-}
-
+    // always-on hover influence
+    canvas.addEventListener("mousemove", handleHoverMove);
+  }
 
   function loop() {
     if (!(ctx && canvas)) return requestAnimationFrame(loop);
@@ -317,20 +360,27 @@ canvas.addEventListener("mousemove", handleHoverMove);
     // advance turbulence tick for variety
     __turbTick += 1.0;
 
-    const wind =0;
+    const wind = 0; // neutral baseline (mic/scene wind can add to this later)
 
     for (let i = parts.length - 1; i >= 0; i--) {
       const p = parts[i];
+      const phys = p.phys || DEFAULT_PHYS;
 
       if (!p.settled) {
         // airborne physics
         p.vx  += wind * WIND_K;
-        p.vy  += GRAVITY;
-         p.vx *= 0.995;  // slight air drag
+        p.vy  += GRAVITY * phys.g;        // heavier = more gravity
+
+        // air drag
+        p.vx *= (1 - phys.air);
+        p.vy *= (1 - phys.air * 0.60);
+
+        // a touch of “lift” for light/flat things
+        p.vy -= Math.abs(p.vx) * phys.lift;
 
         // subtle turbulence so paths aren't straight
-        const jitterX = turb(p.x, p.y) * 0.02;   // tweak 0.03–0.08
-        const jitterY = turb(p.y, p.x) * 0.015;   // small vertical wobble
+        const jitterX = turb(p.x, p.y) * 0.02 * phys.turb;
+        const jitterY = turb(p.y, p.x) * 0.015 * phys.turb;
         p.vx += jitterX;
         p.vy += jitterY * 0.2;
 
@@ -344,8 +394,8 @@ canvas.addEventListener("mousemove", handleHoverMove);
           if (bottom >= groundY) {
             p.y = groundY - (p.h * 0.5); // snap to ground
             p.vy = 0;
-            p.vx *= 0.4;                 // impact damping
-            p.spin *= 0.4;
+            p.vx *= phys.impact;         // impact damping by mass
+            p.spin *= phys.impact * 0.9;
             p.settled = true;
           }
         }
@@ -353,8 +403,8 @@ canvas.addEventListener("mousemove", handleHoverMove);
         // ground slide + friction until stopped
         p.x   += p.vx;
         p.rot += p.spin;
-        p.vx  *= FRICTION;
-        p.spin *= ROT_FRICTION;
+        p.vx  *= (p.phys?.groundFriction ?? FRICTION);
+        p.spin *= (p.phys?.rotFriction ?? ROT_FRICTION);
 
         if (Math.abs(p.vx) < STOP_EPS) p.vx = 0;
         if (Math.abs(p.spin) < 0.002)  p.spin = 0;
@@ -396,10 +446,9 @@ canvas.addEventListener("mousemove", handleHoverMove);
   function init() {
     canvas = document.getElementById("litterCanvas");
     if (!canvas) return;
-ctx = canvas.getContext("2d", { alpha: true });
-canvas.style.touchAction = "none";
-canvas.style.pointerEvents = "auto";   // ✅ make it interactive
-
+    ctx = canvas.getContext("2d", { alpha: true });
+    canvas.style.touchAction = "none";
+    canvas.style.pointerEvents = "auto";   // interactive
 
     sizeCanvas();
     window.addEventListener("resize", sizeCanvas);
@@ -621,11 +670,6 @@ const ALL = [
 
 preload(ALL).then(async () => {
   await setNearAspectFromRef();
-  // also ensure litter sprite images are instantiated into per-scene pools
-  // (we loaded URLs above so they're cached; now build the banks)
-  // NOTE: this calls the internal preloadSprites() inside the IIFE — it ran on DOMContentLoaded,
-  // but awaiting here guarantees the banks are ready before first spawn.
-  if (window.requestAnimationFrame) { /* no-op, just keeping structure readable */ }
 
   buildGroundStack();
   buildFarParallax();
@@ -636,10 +680,7 @@ preload(ALL).then(async () => {
   // Nudge the litter module to know lamp positions/ground line
   window.__refreshLampGroundLine?.();
   window.__refreshLampLitterRects?.();
-  
   window.dispatchEvent(new Event("resize"));
-
- 
 
   const xfade = buildCrossfade();
 
@@ -651,8 +692,8 @@ preload(ALL).then(async () => {
     pin: true,
     anticipatePin: 1,
 
-   onEnter(){ disableCityClicks(); },
-onEnterBack(){ disableCityClicks(); },
+    onEnter(){ disableCityClicks(); },
+    onEnterBack(){ disableCityClicks(); },
     onLeave(){ enableCityClicks(); },
     onLeaveBack(){ enableCityClicks(); },
 
@@ -671,7 +712,7 @@ onEnterBack(){ disableCityClicks(); },
       LT.wind += (Math.random() - 0.5) * 60;  // drift noise
       LT.p     = p;
 
-      const sceneIdx = sceneFromProgress(p);  // ✅ use the 0/1/2 mapper
+      const sceneIdx = sceneFromProgress(p);  // 0/1/2 mapper
       while (LT.acc > 85){
         window.spawnLampLitter?.(sceneIdx, 4 + (Math.random()*4|0));
         LT.acc -= 85;
@@ -680,9 +721,7 @@ onEnterBack(){ disableCityClicks(); },
       gsap.set("#parallaxNearStack", { x: 0 });
       gsap.set("#parallaxFarStack",  { x: 0 });
     },
-    onRefresh(self){
-      
-    },
+    onRefresh(self){},
     invalidateOnRefresh: true,
     onRefreshInit(){ xfade.progress(0); }
   });
