@@ -59,6 +59,11 @@ const LITTER_PACKS = {
     "images/litter/plasticpacke.png",
     "images/litter/colorcan.png",
     "images/litter/wine.png",
+    "images/litter/mask.png",
+     "images/litter/waterbottle.png",
+    "images/litter/plasticpacke.png",
+    "images/litter/colorcan.png",
+    "images/litter/wine.png",
     "images/litter/mask.png"
   ],
   2: [ // late: plastics/cans/masks/etc.
@@ -626,10 +631,7 @@ preload(ALL).then(async () => {
   
   window.dispatchEvent(new Event("resize"));
 
-  // initial sprinkle for scene 0
-  requestAnimationFrame(() => {
-    window.spawnLampLitter?.(0, 24);
-  });
+ 
 
   const xfade = buildCrossfade();
 
@@ -641,8 +643,8 @@ preload(ALL).then(async () => {
     pin: true,
     anticipatePin: 1,
 
-    onEnter(){ disableCityClicks(); __seedInitialLitter(); },
-    onEnterBack(){ disableCityClicks(); __seedInitialLitter(); },
+   onEnter(){ disableCityClicks(); },
+onEnterBack(){ disableCityClicks(); },
     onLeave(){ enableCityClicks(); },
     onLeaveBack(){ enableCityClicks(); },
 
@@ -671,7 +673,7 @@ preload(ALL).then(async () => {
       gsap.set("#parallaxFarStack",  { x: 0 });
     },
     onRefresh(self){
-      if (self.progress < XFADE_HOLD_START) __seedInitialLitter();
+      
     },
     invalidateOnRefresh: true,
     onRefreshInit(){ xfade.progress(0); }
