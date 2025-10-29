@@ -9,6 +9,7 @@
   transform: translateY(5vh);
   will-change: opacity, transform;
   z-index: 2; 
+
 }
 
 
@@ -19,7 +20,7 @@
 
 /* stacked ground fades (5→8) */
 #lampsGroundStack{
-  position:absolute; inset:0; z-index:4; pointer-events:none;
+  position:absolute; inset:0; z-index:3; 
 }
 #lampsGroundStack img.ground{
   position:absolute; left:0; right:0; bottom:0;
@@ -80,4 +81,163 @@
 #lampsGroundBase  { z-index:1; }
 #parallaxNearStack{ z-index:2; }
 #lampsGroundStack { z-index:3; }
-#lampsRow         { z-index:4; }
+#lampsRow         { z-index:6;pointer-events: none;  }
+/* -------------------------------------------------
+   Lamp click → ON/OFF visuals
+   The glow/beam follow CSS variables we set from JS
+--------------------------------------------------*/
+.lampWrap{
+  position: absolute;
+  transform: translateX(-50%);
+  /* defaults; JS will override per scene */
+  --bx: 50%;   /* bulb center X */
+  --by: 6%;    /* bulb top Y (relative to wrap) */
+  --bw: 80px;  /* glow width  */
+  --bh: 92px;  /* glow height */
+  --beamW: 240px;
+  --beamH: 300px;
+  --beamY: 90px;   /* distance from bulb to beam start */
+  --hue: 40deg;    /* 40° = warm lantern, 58° = cold streetlight */
+}
+
+/* clickable bulb hit area */
+.lampWrap .lamp-hit{
+  position:absolute;
+  left: var(--bx);
+  top:  var(--by);
+  width: var(--bw);
+  height: var(--bh);
+  transform: translate(-50%, 0);
+
+}
+
+/* inner bulb glow (CSS only) */
+.lampWrap .lamp-glow{
+  position:absolute;
+  left: var(--bx);
+  top:  var(--by);
+  width: var(--bw);
+  height: var(--bh);
+  transform: translate(-50%, 0);
+  pointer-events:none;
+  opacity:0;
+  background:
+    radial-gradient(ellipse at 50% 35%,
+      hsla(var(--hue), 80%, 85%, .9) 0%,
+      hsla(var(--hue), 90%, 72%, .55) 35%,
+      hsla(var(--hue), 95%, 58%, .30) 60%,
+      rgba(0,0,0,0) 78%);
+  mix-blend-mode: screen;
+  filter: blur(1px);
+  transition: opacity .18s linear;
+}
+
+/* downward beam */
+.lampWrap .lamp-beam{
+  position:absolute;
+  left: var(--bx);
+  top:  calc(var(--by) + var(--beamY));
+  width: var(--beamW);
+  height: var(--beamH);
+  transform: translateX(-50%);
+  pointer-events:none;
+  opacity:0;
+  background:
+    radial-gradient(ellipse at 50% 0%,
+      rgba(255,235,170,.85) 0%,
+      rgba(255,215,130,.40) 25%,
+      rgba(200,170,90,.18) 48%,
+      rgba(160,140,90,0) 75%);
+  clip-path: polygon(50% 0%, 100% 100%, 0% 100%);
+  mix-blend-mode: screen;
+  filter: blur(1px);
+  transition: opacity .18s linear;
+}
+
+/* ON state */
+.lampWrap.on .lamp-glow{ opacity:.95; }
+.lampWrap.on .lamp-beam{ opacity:.85; }
+
+/* make sure the row can receive clicks */
+#lampsRow{ pointer-events:auto; }
+/* ========== CLICKABLE LAMP HIT AREA ========== */
+ .lampWrap { position: absolute; bottom: 0; }
+ .lampWrap .lamp-hit{
+  position:absolute;
+  left: var(--bx,50%); top: var(--by,0%);
+  width: var(--bw,80px); height: var(--bh,80px);
+  transform: translate(-50%, -50%);
+ pointer-events: auto; cursor: pointer;           /* show hand only on the lamp */
+  background: transparent;
+  z-index: 7;
+}
+
+/* soft glow circle that sits inside the lantern head */
+ .lampWrap .lamp-glow{
+  position:absolute;
+  left: var(--bx,50%); top: var(--by,0%);
+  width: var(--bw,80px); height: var(--bh,80px);
+  transform: translate(-50%, -50%);
+  border-radius: 999px;
+  background: radial-gradient(closest-side, rgba(255,240,180,0.95), rgba(255,240,180,0.0) 70%);
+  filter: blur(2px);
+  opacity: 0;
+  pointer-events: none;
+  z-index: 3;
+  mix-blend-mode: screen;
+}
+
+/* downward beam */
+ .lampWrap .lamp-beam{
+  position:absolute;
+  left: var(--bx,50%); top: calc(var(--by,0%) + var(--beamY,90px));
+  width: var(--beamW,260px); height: var(--beamH,280px);
+  transform: translate(-50%, 0);
+  background: radial-gradient(ellipse at 50% 0%,
+              rgba(255,240,180,0.40) 0%,
+              rgba(255,240,180,0.18) 40%,
+              rgba(255,240,180,0.00) 100%);
+  filter: blur(1.5px);
+  opacity: 0;
+  pointer-events: none;
+  z-index: 2;
+  mix-blend-mode: screen;
+}
+
+/* ON state (steady) */
+#lampsScene .lampWrap.on .lamp-glow,
+#lampsScene .lampWrap.on .lamp-beam{
+  opacity: 1;
+}
+
+/* brief startup flicker (only while class .flicker is present) */
+@keyframes lampFlicker {
+  0%,100%{opacity:1}
+  6%{opacity:.5}
+  12%{opacity:1}
+  20%{opacity:.55}
+  33%{opacity:1}
+  46%{opacity:.7}
+  62%{opacity:1}
+  78%{opacity:.6}
+  90%{opacity:1}
+}
+#lampsScene .lampWrap.on.flicker .lamp-glow,
+#lampsScene .lampWrap.on.flicker .lamp-beam{
+  animation: lampFlicker 900ms linear infinite;
+}
+
+#litterCanvas{
+  position:absolute;
+  inset:0;
+  width:100%;
+  height:100%;
+  z-index:4;              /* < keep it BELOW #lampsRow (z=4/5) */
+  pointer-events:auto;    /* < allow clicks/drags */
+  isolation:isolate;
+    cursor: pointer;            /* nice affordance */
+     transition: cursor 0.2s;
+}
+#litterCanvas.dragging {
+  cursor: grabbing;
+}

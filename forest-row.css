@@ -218,7 +218,7 @@
   pointer-events: auto;
   background: transparent;
   user-select: none;
-  cursor: crosshair;
+  cursor: default;
 }
 /* tiny debug flash so you *see* we caught the click */
 .city-dot{

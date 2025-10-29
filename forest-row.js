@@ -1,6 +1,6 @@
 // forest-row.js
 gsap.registerPlugin(ScrollTrigger);
-
+gsap.config({ nullTargetWarn: false });
 /* ---------- assets ---------- */
 const SRC = {
   full: "images/Tree-Full.png",
@@ -363,7 +363,8 @@ function setupReveal(){
   })
   .add(startBreathing);
 
-  gsap.set(".tree-back, .tree", { opacity: 0, clipPath: "inset(100% 0 0 0)" });
+ const els = document.querySelectorAll("#forestReveal .tree-back, #forestReveal .tree");
+  if (els.length) gsap.set(els, { opacity: 0, clipPath: "inset(100% 0 0 0)" });
 }
 
 /* ---------- crossfade stages while pinned ---------- */
@@ -415,6 +416,10 @@ const LEAF_SRC_BY_STAGE = {
   1: ["images/leaf_2.png"], // yellow
   2: ["images/leaf_3.png"]  // brown
 };
+
+
+
+
 const LEAF_SPEED  = { 0: [0.5,1.1], 1: [1.0,2.0], 2: [1.8,3.0] };
 const CANOPY_X_BAND = [0.25, 0.75];
 const CANOPY_Y_BAND = [0.80, 0.72];
@@ -436,25 +441,22 @@ function sizeLeafCanvas(){
 window.addEventListener("resize", sizeLeafCanvas);
 
 // canopy rects in canvas coords
+// canopy rects in canvas coords
 let TREE_RECTS = [];
 function cacheTreeRects(){
   if (!leafCanvas) return;
   const cb = leafCanvas.getBoundingClientRect();
-  TREE_RECTS = [...document.querySelectorAll("#forestReveal .tree-wrap")].map(w=>{
+  TREE_RECTS = Array.from(document.querySelectorAll("#forestReveal .tree-wrap")).map(w=>{
     const base = w.querySelector(".tree") || w.querySelector(".tree-back");
     if (!base) return {x1:0,x2:0,y1:0,y2:0};
     const b = base.getBoundingClientRect();
     const x = b.left - cb.left;
     const y = b.top  - cb.top;
     const wpx = b.width, hpx = b.height;
-    return {
-      x1: x + CANOPY_X_BAND[0]*wpx,
-      x2: x + CANOPY_X_BAND[1]*wpx,
-      y1: y + CANOPY_Y_BAND[0]*hpx,
-      y2: y + CANOPY_Y_BAND[1]*hpx
-    };
+    return { x1:x, x2:x+wpx, y1:y, y2:y+hpx };
   });
 }
+
 
 const rand = (a,b)=>a + Math.random()*(b-a);
 
@@ -1907,6 +1909,27 @@ if (!router){
   document.body.appendChild(router);
 }
 
+window.__cityClicksOff = function(){
+  const r = document.getElementById("cityClickRouter");
+  if (r) {
+    r.style.display = "none";
+    r.style.pointerEvents = "none";
+    r.style.cursor = "default";
+  }
+  const sparks = document.getElementById("citySparks");
+  if (sparks) sparks.style.display = "none";
+};
+
+window.__cityClicksOn = function(){
+  const r = document.getElementById("cityClickRouter");
+  if (r) {
+    r.style.display = "block";
+    r.style.pointerEvents = "auto";
+    r.style.cursor = "crosshair";
+  }
+  const sparks = document.getElementById("citySparks");
+  if (sparks) sparks.style.display = "block";
+};
 
 
 function debugDot(x,y){
@@ -1967,7 +1990,7 @@ router.addEventListener("click", (ev)=>{
   if (router.style.display === "none") return;
 
   const x = ev.clientX, y = ev.clientY;
-  debugDot(x,y); // remove later if you want
+ 
 
   // if over a tree-wrap, forward so your existing tree click logic runs
   const under = elementUnder(x,y);
@@ -2003,15 +2026,7 @@ hit.id = "cityHit";
 wrap.appendChild(hit);
 
 // helper: tiny debug dot so you can *see* the click landed
-function debugDot(x, y){
-  const dot = document.createElement("div");
-  dot.className = "city-click-dot";
-  dot.style.left = x + "px";
-  dot.style.top  = y + "px";
-  document.body.appendChild(dot);
-  requestAnimationFrame(()=> dot.classList.add("fade"));
-  setTimeout(()=> dot.remove(), 420);
-}
+
 
 // attempt to grab your existing leaf canvas + context
 function getLeafCtx(){
@@ -2093,52 +2108,6 @@ function sparksCanvas(x, y, opts = {}){
 
   return true;
 }
-
-// DOM sparks (Plan B, if no canvas visible)
-function sparksDOM(x, y, count = 16){
-  for (let i=0; i<count; i++){
-    const el = document.createElement("div");
-    el.className = "city-spark";
-    const ang = (Math.random()*90 - 45);     // deg
-    const len = 12 + Math.random()*18;
-    const dx  = Math.cos(ang*Math.PI/180) * (4 + Math.random()*8);
-    const dy  = Math.sin(ang*Math.PI/180) * (4 + Math.random()*8);
-
-    el.style.left = x + "px";
-    el.style.top  = y + "px";
-    el.style.transform = `translate(-1px,-1px) rotate(${ang}deg) scaleX(0.4)`;
-    document.body.appendChild(el);
-
-    // kick animation
-    requestAnimationFrame(()=>{
-      el.style.transform = `translate(${dx}px,${dy}px) rotate(${ang}deg) scaleX(${len/14})`;
-      el.style.opacity = "0";
-    });
-    setTimeout(()=> el.remove(), 320);
-  }
-}
-
-// click handler → viewport coords → canvas coords (if needed)
-function onHitClick(ev){
-  const x = ev.clientX;
-  const y = ev.clientY;
-  debugDot(x, y); // always shows so you can confirm the hit
-
-  // Try canvas first. If your leaf canvas is above everything,
-  // drawing there will show. If not found or hidden, fallback to DOM sparks.
-  const ok = sparksCanvas(x, y);
-  if (!ok) sparksDOM(x, y, 20);
-}
-hit.addEventListener("click", onHitClick, {passive:true});
-
-    // start hidden (reveal curve unchanged)
-    [back, mid, near].forEach(el=>{
-      el.style.opacity = "0";
-      el.style.transform = "translate3d(0,30px,0)";
-      el.style.filter = "blur(2px)";
-      // initialize background positions
-      el.style.backgroundPosition = "50% 100%";
-    });
 
 /* ==== 👇 ADD THIS BLOCK (sparks canvas + clicks) ==== */
 const sparks = document.createElement("canvas");
@@ -2672,20 +2641,23 @@ tl.add(jitterInPlace(wrap, 5, 1.0, 0.035));
     }
     requestAnimationFrame(loop);
   }
+function resetAll(){
+  const wraps = document.querySelectorAll("#forestReveal .tree-wrap");
+  if (!wraps.length) return; // <-- add this
 
-  function resetAll(){
-    document.querySelectorAll("#forestReveal .tree-wrap").forEach(w=>{
-      w.dataset.gone = "0";
-        w.__burstEarly = false;
+  wraps.forEach(w=>{
+    w.dataset.gone = "0";
+    w.__burstEarly = false;
     w.__burstImpact = false;
-      const kids = w.querySelectorAll(".tree, .tree-back, .tree-stage");
-      const sh   = w.querySelector(".shadow-oval");
-      gsap.set(w,    { clearProps:"x,y,rotation,scale,skew,transform,pointerEvents" });
-      gsap.set(kids, { clearProps:"opacity,filter,transform" });
-      if (sh) gsap.set(sh, { clearProps:"opacity,transform" });
-    });
-    lastEdgeX = null; movingLeft = null; haveDirection = false; armed = false;
-  }
+    const kids = w.querySelectorAll(".tree, .tree-back, .tree-stage");
+    const sh   = w.querySelector(".shadow-oval");
+    gsap.set(w,    { clearProps:"x,y,rotation,scale,skew,transform,pointerEvents" });
+    gsap.set(kids, { clearProps:"opacity,filter,transform" });
+    if (sh) gsap.set(sh, { clearProps:"opacity,transform" });
+  });
+  lastEdgeX = null; movingLeft = null; haveDirection = false; armed = false;
+}
+
 
   loop();
   window.__uncullTrees__ = resetAll;
@@ -3727,6 +3699,9 @@ window.addEventListener("resize", debounce(rebuildRows, 120));
 
   const overlay = document.createElement("div");
   overlay.id = "cityClickRouter";
+  overlay.style.display = "none";
+overlay.style.pointerEvents = "none";
+overlay.style.cursor = "default";
   document.body.appendChild(overlay);
 
   function debugDot(x,y){
