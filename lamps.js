@@ -81,7 +81,7 @@ const LITTER_ALL = [...new Set([...LITTER_PACK_DEFAULT, ...Object.values(LITTER_
 (() => {
   // physics/feel
   const GRAVITY = 0.018;
-  const WIND_K  = 0.06;
+  const WIND_K  = 0.01;
   const FRICTION = 0.94;        // ground slide damping per frame
   const ROT_FRICTION = 0.96;    // slow spin while sliding
   const STOP_EPS = 0.03;        // stop threshold for vx
@@ -248,14 +248,7 @@ const LITTER_ALL = [...new Set([...LITTER_PACK_DEFAULT, ...Object.values(LITTER_
 let dragging = false;
 let lastX = 0, lastY = 0;
 
-function handleDown(e) {
-  dragging = true;
-  canvas.classList.add("dragging");
-  const rect = canvas.getBoundingClientRect();
-  lastX = e.clientX - rect.left;
-  lastY = e.clientY - rect.top;
-  e.preventDefault();
-}
+
 
 function handleMove(e) {
   if (!dragging) return;
@@ -287,17 +280,32 @@ function handleMove(e) {
     }
   }
 }
+function handleHoverMove(e) {
+  const rect = canvas.getBoundingClientRect();
+  const x = e.clientX - rect.left;
+  const y = e.clientY - rect.top;
 
-function handleUp() {
-  dragging = false;
-  canvas.classList.remove("dragging");
+  const influenceRadius = 160;   // hover reach (can adjust)
+  const impulseStrength = 0.25;  // motion amount (smaller = gentler)
+
+  for (let i = 0; i < parts.length; i++) {
+    const p = parts[i];
+    const dx = p.x - x;
+    const dy = p.y - y;
+    const d2 = dx * dx + dy * dy;
+    if (d2 < influenceRadius * influenceRadius) {
+      const falloff = 1 - Math.sqrt(d2) / influenceRadius;
+      p.settled = false;
+      p.vx += dx * impulseStrength * falloff * -0.03; // push away slightly
+      p.vy += dy * impulseStrength * falloff * -0.03;
+      p.spin += (Math.random() - 0.5) * 0.02;
+    }
+  }
 }
 
+
 function enableLitterDrag() {
-  if (!canvas) return;
-  canvas.addEventListener("mousedown", handleDown);
-  window.addEventListener("mousemove", handleMove);
-  window.addEventListener("mouseup", handleUp);
+canvas.addEventListener("mousemove", handleHoverMove);
 }
 
 
@@ -309,7 +317,7 @@ function enableLitterDrag() {
     // advance turbulence tick for variety
     __turbTick += 1.0;
 
-    const wind = (window.__litterTick?.wind || 0) * 0.003;
+    const wind =0;
 
     for (let i = parts.length - 1; i >= 0; i--) {
       const p = parts[i];
