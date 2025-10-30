@@ -580,6 +580,10 @@ function __setLampsOn(on){
       });
   }
   window.dispatchEvent(new CustomEvent("lamps:state", { detail:{ on } }));
+  window.addEventListener("lamps:state", (e)=>{
+  const on = !!e.detail?.on;
+  window.__smokeEnable?.(on);     // emit only when ON
+});
 }
 window.__toggleLamps = function(){ __setLampsOn(!window.__lampsOn); };
 
@@ -655,6 +659,267 @@ function buildCrossfade(){
   }
   return tl;
 }
+/* ================== CHIMNEY + FACTORY SMOKE ================== */
+/* ================== CHIMNEY + FACTORY SMOKE (sprite-based, pooled) ================== */
+(() => {
+  const cvs = document.getElementById('smokeCanvas');
+  if (!cvs) return;
+  const ctx = cvs.getContext('2d', { alpha:true });
+
+  /* ------- ASSETS (put your PNGs in /images/smoke/ ) ------- */
+  const DRIFT_SRCS = [
+    "images/smoke/drift_puff_01.png",
+    "images/smoke/drift_puff_02.png",
+    "images/smoke/drift_puff_03.png",
+    "images/smoke/drift_puff_04.png",
+    "images/smoke/drift_puff_05.png",
+    "images/smoke/drift_puff_06.png"
+  ];
+  const puffImgs = [];
+  let assetsReady = false;
+
+  function preloadPuffs() {
+    return Promise.all(DRIFT_SRCS.map(src => new Promise(res => {
+      const im = new Image();
+      im.onload = im.onerror = () => res(im);
+      im.src = src;
+    }))).then(arr => { puffImgs.push(...arr.filter(Boolean)); assetsReady = true; });
+  }
+  preloadPuffs();
+
+  /* ------- PERF / TUNING ------- */
+  const MAX_PARTS       = 360;  // cap particles
+  const TARGET_FPS      = 30;   // logic tick
+  const BASE_SPAWN      = 1.0;  // global density multiplier
+  const DRAG            = 0.985;
+  const CEILING_FRAC    = 0.18; // fraction of H where smoke “hits the ceiling”
+  const CEILING_SPREAD  = 0.020; // extra lateral spread when above ceiling
+  const LIFT_BASE       = -0.050; // baseline rise (negative y velocity)
+  const LIFT_JITTER     = -0.030; // random extra rise
+  const WIND_K          = 0.06;  // wind effect scaler
+  const FADE_PER_SEC    = 0.30;  // life decay per second (0..1)
+const NEAR_SCALE = [0.05, 0.20];  // near chimneys (houses)
+const FAR_SCALE  = [0.03, 0.09];  // far factories / back houses
+  const NEAR_ALPHA      = [0.55, 0.85];
+  const FAR_ALPHA       = [0.45, 0.72];
+
+  // “Top smog” blanket targets per scene (fills down from the top)
+  const SMOG = {
+    0: { a: 0.15, h: 0.28 },
+    1: { a: 0.25, h: 0.42 },
+    2: { a: 0.38, h: 0.58 },
+  };
+  let smogAlpha  = 0;
+  let smogHeight = 0;
+
+  // Scene multipliers (density)
+  const SCENE_MULT = { 0: 0.65, 1: 1.00, 2: 1.40 };
+
+  // Lamp + scene state (fed externally)
+  let lampsOn = false;
+  let currentScene = 0;
+  let globalWind = 0; // gentle ± value set from your litter wind
+
+  // Resize
+  function size() {
+    const w = cvs.clientWidth | 0;
+    const h = cvs.clientHeight | 0;
+    if (cvs.width !== w || cvs.height !== h) {
+      cvs.width = w; cvs.height = h;
+    }
+  }
+  size(); addEventListener('resize', size);
+
+  /* ------- Emitters (percent positions, easy to line up with art) ------- */
+  // depth: 'near' or 'far'; rate ≈ particles/sec at SCENE_MULT=1 when lamps ON
+  const EMITTERS = {
+    0: [ // Lantern scene — 3 house chimneys, lighter
+  { xPct: 5,  yPct: 50, rate: 14, depth: 'far' },
+  { xPct: 73, yPct: 68, rate: 16, depth: 'near' },
+  { xPct: 92, yPct: 51, rate: 14, depth: 'far' },
+    ],
+
+
+    1: [ // Streetlight scene — more chimneys + distant factories
+     // --- NEAR (green) — house roofs ---
+  { xPct: 16, yPct: 48, rate: 18, depth: 'near' }, // left house
+  { xPct: 66, yPct: 49, rate: 20, depth: 'near' }, // middle house
+  { xPct: 41, yPct: 50, rate: 18, depth: 'near' }, // right house
+{ xPct: 86, yPct: 50, rate: 10, depth: 'near' }, // right house
+
+  // --- FAR (orange) — skyline stacks ---
+  { xPct: 22, yPct: 17, rate: 26, depth: 'far' },  // far-left tall stack
+  { xPct: 85, yPct: 16, rate: 26, depth: 'far' },  // far-right tall stack
+  { xPct: 56, yPct: 32, rate: 20, depth: 'far' },  // far-right tall stack
+    { xPct: 51, yPct: 32, rate: 20, depth: 'far' },  // far-right tall stack
+
+    ],
+
+
+    2: [ // Later streetlight — densest, more factories
+      // --- NEAR (green) — house roofs ---
+  { xPct: 16, yPct: 48, rate: 18, depth: 'near' }, // left house
+  { xPct: 66, yPct: 49, rate: 20, depth: 'near' }, // middle house
+  { xPct: 41, yPct: 50, rate: 18, depth: 'near' }, // right house
+{ xPct: 86, yPct: 50, rate: 10, depth: 'near' }, // right house
+
+  // --- FAR (orange) — skyline stacks ---
+  { xPct: 22, yPct: 17, rate: 26, depth: 'far' },  // far-left tall stack
+  { xPct: 85, yPct: 16, rate: 26, depth: 'far' },  // far-right tall stack
+  { xPct: 56, yPct: 32, rate: 20, depth: 'far' },  // far-right tall stack
+    { xPct: 51, yPct: 32, rate: 20, depth: 'far' },  // far-right tall stack
+
+    ],
+  };
+
+  // Expose a tiny API so you can tweak anchors live if needed
+  window.__smokeSetEmitters = (sceneIdx, list) => { EMITTERS[sceneIdx|0] = list || []; };
+
+  /* ------- Pool & Parts ------- */
+  const parts = [];
+  const pool  = [];
+  function getPart(){ return pool.pop() || {}; }
+  function freePart(p){ pool.push(p); }
+
+  function rand(a, b){ return a + Math.random() * (b - a); }
+  function pick(arr){ return arr[(Math.random() * arr.length) | 0]; }
+
+  function spawn(ex, ey, near=true) {
+    if (!assetsReady || !puffImgs.length) return;
+    const p = getPart();
+    p.x = ex + rand(-6, 6);
+    p.y = ey + rand(-2, 2);
+    p.vx = rand(-0.12, 0.12);
+    p.vy = LIFT_BASE + rand(LIFT_JITTER * 0.5, LIFT_JITTER); // rising up (negative)
+    p.rot = rand(0, Math.PI * 2);
+    p.img = pick(puffImgs);
+    p.depth = near ? 'near' : 'far';
+    p.s = near ? rand(NEAR_SCALE[0], NEAR_SCALE[1]) : rand(FAR_SCALE[0], FAR_SCALE[1]);
+    p.aBase = near ? rand(NEAR_ALPHA[0], NEAR_ALPHA[1]) : rand(FAR_ALPHA[0], FAR_ALPHA[1]);
+    p.life = 1.0; // 1 → 0
+    parts.push(p);
+    if (parts.length > MAX_PARTS) freePart(parts.shift());
+  }
+
+  /* ------- State wiring from your app ------- */
+  addEventListener('lamps:state', (e) => { lampsOn = !!e.detail?.on; });
+
+  // Accept both names (you used both in your code)
+  function setScene(idx){ currentScene = (idx|0); }
+  window.__setSmokeScene = setScene;
+  window.__smokeSetScene = setScene;
+
+  window.__smokeSetWind = (w) => { globalWind = +w || 0; };
+
+  window.__smokeEnable = (on) => {
+    // If you ever want to hard stop & clear immediately:
+    if (!on) { for (let i=parts.length-1;i>=0;i--) freePart(parts.pop()); }
+    lampsOn = !!on;
+  };
+
+  /* ------- Main loop (throttled logic) ------- */
+  let last = performance.now(), acc = 0;
+  function raf(now){
+    const dt = now - last; last = now;
+    acc += dt;
+    const step = 1000 / TARGET_FPS;
+    while (acc >= step) { update(step/1000); acc -= step; }
+    render();
+    requestAnimationFrame(raf);
+  }
+  requestAnimationFrame(raf);
+
+  function update(dt) {
+    size();
+    const W = cvs.width, H = cvs.height;
+    const ceilY = CEILING_FRAC * H;
+
+    // Emit
+    if (lampsOn) {
+      const emitters = EMITTERS[currentScene] || [];
+      const dens = SCENE_MULT[currentScene] ?? 1;
+      const k = BASE_SPAWN * dens * dt; // scalar
+
+      for (let i=0;i<emitters.length;i++){
+        const e = emitters[i];
+        const ex = (e.xPct/100) * W;
+        const ey = (e.yPct/100) * H;
+        const near = e.depth !== 'far';
+
+        // Poisson-ish spawn count
+        e._carry = (e._carry || 0) + e.rate * k;
+        const n = e._carry | 0;
+        e._carry -= n;
+        for (let j=0;j<n;j++) spawn(ex, ey, near);
+      }
+    }
+
+    // Physics
+    for (let i=parts.length-1;i>=0;i--){
+      const p = parts[i];
+
+      // wind + rise
+      p.vx += globalWind * WIND_K * (p.depth === 'near' ? 1.0 : 0.65);
+      p.vy += -0.012; // constant tug upwards
+
+      // ceiling behavior → flatten outward
+      if (p.y < ceilY) {
+        p.vx += rand(-CEILING_SPREAD, CEILING_SPREAD);
+        p.vy = Math.min(p.vy, -0.02);
+      }
+
+      // decay & motion
+      p.vx *= DRAG;
+      p.vy *= DRAG;
+      p.x  += p.vx * (dt * 60);
+      p.y  += p.vy * (dt * 60);
+      p.rot += 0.0009 * (dt * 1000);
+
+      // fade out
+      p.life -= FADE_PER_SEC * dt;
+      if (p.life <= 0 || p.y < -120) {
+        freePart(parts.splice(i,1)[0]);
+      }
+    }
+
+    // Smog blanket easing (only while lampsOn)
+    const tgt = SMOG[currentScene] || SMOG[1];
+    const mul = lampsOn ? 1 : 0;
+    smogAlpha  += ((tgt.a * mul) - smogAlpha) * 0.05;
+    smogHeight += ((tgt.h * mul) - smogHeight) * 0.045;
+  }
+
+  function render() {
+    const W = cvs.width, H = cvs.height;
+    ctx.clearRect(0,0,W,H);
+
+    // You can sort by depth to draw far first (soft layering)
+    // Simple pass: draw all (they have different alpha/scale anyway)
+    for (let i=0;i<parts.length;i++){
+      const p = parts[i];
+      const img = p.img; if (!img) continue;
+      const w = img.width * p.s, h = img.height * p.s;
+      ctx.save();
+      ctx.globalAlpha = Math.max(0, Math.min(1, p.aBase * p.life));
+      ctx.translate(p.x, p.y);
+      ctx.rotate(p.rot);
+      ctx.drawImage(img, -w/2, -h/2, w, h);
+      ctx.restore();
+    }
+
+    // Top smog
+    if (smogAlpha > 0.002 && smogHeight > 0.001) {
+      const hpx = smogHeight * H;
+      const g = ctx.createLinearGradient(0,0,0,hpx);
+      g.addColorStop(0.00, `rgba(15,15,20,${smogAlpha})`);
+      g.addColorStop(0.55, `rgba(15,15,20,${smogAlpha*0.66})`);
+      g.addColorStop(1.00, `rgba(15,15,20,0)`);
+      ctx.fillStyle = g;
+      ctx.fillRect(0,0,W,hpx);
+    }
+  }
+})();
+
 
 /* ---------- INIT ---------- */
 const ALL = [
@@ -669,6 +934,36 @@ preload(ALL).then(async () => {
   buildFarParallax();
   buildNearParallax();
   buildLampRow(5);
+
+  // Chimney anchors for SCENE 0 (lantern scene)
+window.__smokeSetEmitters(0, [
+  // LEFT roof (back row)
+  { xPct: 5,  yPct: 50, rate: 14, depth: 'far' },
+
+  // SMALL house between lamp 4 & 5 (front/near)
+  { xPct: 73, yPct: 68, rate: 16, depth: 'near' },
+
+  // RIGHT roof (back row)
+  { xPct: 92, yPct: 51, rate: 14, depth: 'far' },
+]);
+
+/* -------------------------------
+   Scene 1 emitters (city streetlights)
+-------------------------------- */
+window.__smokeSetEmitters(1, [
+    // --- NEAR (green) — house roofs ---
+  { xPct: 16, yPct: 48, rate: 18, depth: 'near' }, // left house
+  { xPct: 66, yPct: 49, rate: 20, depth: 'near' }, // middle house
+  { xPct: 41, yPct: 50, rate: 18, depth: 'near' }, // right house
+{ xPct: 86, yPct: 50, rate: 10, depth: 'near' }, // right house
+
+  // --- FAR (orange) — skyline stacks ---
+  { xPct: 22, yPct: 17, rate: 26, depth: 'far' },  // far-left tall stack
+  { xPct: 85, yPct: 16, rate: 26, depth: 'far' },  // far-right tall stack
+  { xPct: 56, yPct: 32, rate: 20, depth: 'far' },  // far-right tall stack
+    { xPct: 51, yPct: 32, rate: 20, depth: 'far' },  // far-right tall stack
+
+]);
 
   /* start in lantern style, lights OFF */
   setLampConfig("#lampsScene", LANTERN_CFG);
@@ -708,6 +1003,9 @@ preload(ALL).then(async () => {
       LT.p     = p;
 
       const sceneIdx = sceneFromProgress(p);
+      window.__smokeSetScene?.(sceneIdx);                         // ← set which anchors
+  window.__smokeSetWind?.((window.__litterTick?.wind ?? 0)*0.02); // ← gentle wind
+
       while (LT.acc > 85){
         window.spawnLampLitter?.(sceneIdx, 4 + (Math.random()*4|0));
         LT.acc -= 85;
@@ -715,6 +1013,7 @@ preload(ALL).then(async () => {
 
       gsap.set("#parallaxNearStack", { x: 0 });
       gsap.set("#parallaxFarStack",  { x: 0 });
+      
     },
     onRefresh(){},
     invalidateOnRefresh: true,
