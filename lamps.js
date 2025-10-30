@@ -1,11 +1,10 @@
-// lamps.js
 gsap.registerPlugin(ScrollTrigger);
 
 /* ---------- ASSETS ---------- */
 const LAMP_SRC = [
-  "images/lampost1.png",
-  "images/lampost3.png",
-  "images/lampost5.png"
+  "images/lampost1.png",  // stage 0 → lantern
+  "images/lampost3.png",  // stage 1 → streetlight
+  "images/lampost5.png"   // stage 2 → later streetlight
 ];
 
 const GROUND_SRC = [
@@ -32,25 +31,24 @@ const NEAR_REF = "images/constructioncity_near.png";
 const XFADE_HOLD_START = 0.12;
 const XFADE_HOLD_END   = 0.20;
 const XFADE_SEGS       = LAMP_SRC.length - 1; // 2 segments for 3 images
-const XFADE_SEG_DUR    = (1 - XFADE_HOLD_START - XFADE_HOLD_END) / XFADE_SEGS; // 0.34
-// Cut points where we switch the *spawn* pack (a bit into each crossfade so visuals lead)
+const XFADE_SEG_DUR    = (1 - XFADE_HOLD_START - XFADE_HOLD_END) / XFADE_SEGS;
+
+// cut points where we switch the *spawn* pack (a bit into each crossfade so visuals lead)
 const CUT1 = XFADE_HOLD_START + XFADE_SEG_DUR * 0.58;                 // ~0.317
 const CUT2 = XFADE_HOLD_START + XFADE_SEG_DUR + XFADE_SEG_DUR * 0.58; // ~0.657
 function sceneFromProgress(p){
   return (p < CUT1) ? 0 : (p < CUT2) ? 1 : 2;
 }
 
-/* ---- LITTER PACKS (per scene) ----
-   0 = early (lampost1), 1 = mid (lampost3), 2 = late (lampost5)
-*/
+/* ---- LITTER PACKS (per scene) ---- */
 const LITTER_PACKS = {
-  0: [ // early: paper / receipts / generic trash
+  0: [
     "images/litter/paper.png",
     "images/litter/receipt.png",
     "images/litter/trash.png",
     "images/litter/rock.png"
   ],
-  1: [ // mid: takeaway era
+  1: [
     "images/litter/coffee.png",
     "images/litter/moderncoffee.png",
     "images/litter/chippacket.png",
@@ -66,7 +64,7 @@ const LITTER_PACKS = {
     "images/litter/wine.png",
     "images/litter/mask.png"
   ],
-  2: [ // late: plastics/cans/masks/etc.
+  2: [
     "images/litter/waterbottle.png",
     "images/litter/plasticpacke.png",
     "images/litter/colorcan.png",
@@ -78,69 +76,44 @@ const LITTER_PACK_DEFAULT = ["images/litter/trash.png", "images/litter/rock.png"
 const LITTER_ALL = [...new Set([...LITTER_PACK_DEFAULT, ...Object.values(LITTER_PACKS).flat()])];
 
 /* ---------- PER-ITEM PHYSICS ---------- */
-// per-basename tuning (defaults at bottom)
 const ITEM_PHYS = {
-  // ultra-light paperish
   "paper":        { g:0.40, air:0.025, turb:0.90, lift:0.018, spin:1.20, groundFriction:0.90, rotFriction:0.94, impact:0.55, cursor:1.75 },
   "receipt":      { g:0.42, air:0.026, turb:0.95, lift:0.020, spin:1.15, groundFriction:0.90, rotFriction:0.94, impact:0.55, cursor:1.75 },
   "trash":        { g:0.55, air:0.020, turb:0.70, lift:0.010, spin:1.00, groundFriction:0.92, rotFriction:0.95, impact:0.60, cursor:1.30 },
-
-  // light plastics / masks
   "mask":         { g:0.60, air:0.022, turb:0.85, lift:0.014, spin:1.10, groundFriction:0.92, rotFriction:0.95, impact:0.60, cursor:1.50 },
   "plasticpacke": { g:0.65, air:0.020, turb:0.75, lift:0.012, spin:1.00, groundFriction:0.93, rotFriction:0.95, impact:0.62, cursor:1.40 },
   "chippacket":   { g:0.68, air:0.020, turb:0.80, lift:0.013, spin:1.05, groundFriction:0.93, rotFriction:0.95, impact:0.62, cursor:1.40 },
-
-  // medium takeaway / bottles / cups / tubs
   "moderncoffee": { g:0.95, air:0.012, turb:0.45, lift:0.004, spin:0.80, groundFriction:0.94, rotFriction:0.96, impact:0.70, cursor:1.00 },
   "coffee":       { g:1.00, air:0.012, turb:0.45, lift:0.004, spin:0.80, groundFriction:0.94, rotFriction:0.96, impact:0.70, cursor:1.00 },
   "tupperware":   { g:1.05, air:0.011, turb:0.40, lift:0.003, spin:0.75, groundFriction:0.94, rotFriction:0.96, impact:0.72, cursor:0.95 },
   "waterbottle":  { g:1.10, air:0.010, turb:0.38, lift:0.002, spin:0.70, groundFriction:0.95, rotFriction:0.96, impact:0.74, cursor:0.90 },
-
-  // heavy cans / glass / rocks
   "colorcan":     { g:1.30, air:0.008, turb:0.28, lift:0.001, spin:0.55, groundFriction:0.96, rotFriction:0.97, impact:0.80, cursor:0.70 },
   "wine":         { g:1.55, air:0.007, turb:0.22, lift:0.000, spin:0.45, groundFriction:0.97, rotFriction:0.975, impact:0.85, cursor:0.55 },
   "rock":         { g:1.60, air:0.006, turb:0.18, lift:0.000, spin:0.40, groundFriction:0.975,rotFriction:0.98,  impact:0.88, cursor:0.50 },
 };
-// sensible defaults if a key is missing
 const DEFAULT_PHYS = { g:0.90, air:0.014, turb:0.55, lift:0.002, spin:1.00, groundFriction:0.94, rotFriction:0.96, impact:0.70, cursor:1.00 };
-// helper to turn "images/litter/waterbottle.png" → "waterbottle"
-function keyFromSrc(src=""){
-  const m = src.match(/([^\/]+)\.(png|jpg|jpeg|webp|gif)$/i);
-  return m ? m[1].toLowerCase() : "unknown";
-}
 
-/* ========= LAMPS: litter sprites (leaf-style canvas), NO FADING ========= */
+/* ================== LITTER CANVAS (no debug boxes) ================== */
 (() => {
-  // physics/feel
-  const GRAVITY = 0.018; // base multiplier (scaled by per-item phys.g)
-  const WIND_K  = 0.01;
-  const FRICTION = 0.94;        // (kept as a fallback)
-  const ROT_FRICTION = 0.96;    // (kept as a fallback)
-  const STOP_EPS = 0.03;        // stop threshold for vx
-  const MAX_PARTS = 520;        // allow larger pile
-  const SIZE_RANGE = [28, 48];
+  const GRAVITY = 0.018, WIND_K = 0.01;
+  const FRICTION = 0.94, ROT_FRICTION = 0.96, STOP_EPS = 0.03;
+  const MAX_PARTS = 520, SIZE_RANGE = [28, 48];
 
-  // asymmetric spawn tuning
-  const LAMP_WANDER_PX   = 160; // wander width around a lamp
-  const FREEFALL_CHANCE  = 0.28; // % that ignore lamps entirely (breaks columns)
-  const TOP_SPAWN_PAD    = 100; // above lamp top
-  const SKY_SPAWN_PAD    = 140; // above whole canvas
-  const BASE_WIND_SCENE0 = -0.01;
-  const BASE_WIND_SCENE1 =  0.03;
-  const GROUND_OFFSET    = -6;  // tuck into ground a touch
+  const LAMP_WANDER_PX = 160;
+  const FREEFALL_CHANCE = 0.28;
+  const TOP_SPAWN_PAD = 100, SKY_SPAWN_PAD = 140;
+  const BASE_WIND_SCENE0 = -0.01, BASE_WIND_SCENE1 = 0.03;
+  const GROUND_OFFSET = -6;
 
   let canvas = null, ctx = null;
   let LAMP_RECTS = [];
-  let groundY = null;           // canvas-space Y where ground begins
+  let groundY = null;
   const parts = [];
 
-  // per-scene preloaded sprites
   const SPRITE_BANK = { 0: [], 1: [], 2: [], default: [] };
-
   const rand = (a, b) => a + Math.random() * (b - a);
   const pick = arr => arr[(Math.random() * arr.length) | 0];
 
-  // Preload litter into the per-scene bank (store {img,key})
   function preloadSprites() {
     const all = [...LITTER_ALL];
     return Promise.all(
@@ -150,7 +123,7 @@ function keyFromSrc(src=""){
         im.src = src;
       }))
     ).then(pairs => {
-      const map = new Map(pairs); // src → image
+      const map = new Map(pairs);
       [0,1,2].forEach(k => {
         SPRITE_BANK[k] = (LITTER_PACKS[k] || [])
           .map(s => ({ img: map.get(s), key: keyFromSrc(s) }))
@@ -162,36 +135,35 @@ function keyFromSrc(src=""){
     });
   }
 
+  function keyFromSrc(src=""){
+    const m = src.match(/([^\/]+)\.(png|jpg|jpeg|webp|gif)$/i);
+    return m ? m[1].toLowerCase() : "unknown";
+  }
+
   function sizeCanvas() {
     if (!canvas) return;
-    canvas.width  = canvas.clientWidth;   // 1:1 pixels
+    canvas.width  = canvas.clientWidth;
     canvas.height = canvas.clientHeight;
     cacheLampRects();
     cacheGroundLine();
   }
 
-function cacheLampRects() {
-  LAMP_RECTS = [];
-  if (!canvas) return;
+  function cacheLampRects() {
+    LAMP_RECTS = [];
+    if (!canvas) return;
 
-  const cb = canvas.getBoundingClientRect();
-
-  document.querySelectorAll('#lampsRow .lampWrap').forEach(w => {
-    // Prefer the dedicated .lamp-hit; fall back to the wrap if missing
-    const target = w.querySelector('.lamp-hit') || w;
-    const r = target.getBoundingClientRect();
-
-    // No padding → gaps between posts won't register clicks
-    LAMP_RECTS.push({
-      x1: r.left  - cb.left,
-      x2: r.right - cb.left,
-      y1: r.top   - cb.top,
-      y2: r.bottom- cb.top
+    const cb = canvas.getBoundingClientRect();
+    document.querySelectorAll('#lampsRow .lampWrap').forEach(w => {
+      const target = w.querySelector('.lamp-hit') || w;
+      const r = target.getBoundingClientRect();
+      LAMP_RECTS.push({
+        x1: r.left  - cb.left,
+        x2: r.right - cb.left,
+        y1: r.top   - cb.top,
+        y2: r.bottom- cb.top
+      });
     });
-  });
-}
-
-
+  }
 
   function cacheGroundLine() {
     groundY = null;
@@ -212,7 +184,6 @@ function cacheLampRects() {
   }
 
   function addPart(x, y, vx, vy, sprite) {
-    // Try not to delete settled pieces
     if (parts.length >= MAX_PARTS) {
       const idx = parts.findIndex(p => !p.settled);
       if (idx >= 0) parts.splice(idx, 1);
@@ -253,29 +224,19 @@ function cacheLampRects() {
     for (let i = 0; i < count; i++) {
       const sprite = pickSpriteForScene(sceneIdx);
 
-      // sometimes ignore lamps completely → breaks the columns
       if (Math.random() < FREEFALL_CHANCE) {
-        const x = rand(-40, W + 40);                     // anywhere across scene
-        const y = rand(-SKY_SPAWN_PAD, 0);               // from the sky
+        const x = rand(-40, W + 40);
+        const y = rand(-SKY_SPAWN_PAD, 0);
         const vx = rand(-0.5, 0.5) + (sceneIdx ? BASE_WIND_SCENE1 : BASE_WIND_SCENE0);
         const vy = rand(0.6, 1.2);
         addPart(x, y, vx, vy, sprite);
         continue;
       }
 
-      // otherwise: bias around a random lamp, but allow big wander
       const rect = pick(LAMP_RECTS);
-
-      // expand horizontally well beyond the lamp
       let x = rand(rect.x1 - LAMP_WANDER_PX, rect.x2 + LAMP_WANDER_PX);
-
-      // start *above* the lamp so some pieces drift across before reaching it
       let y = rect.y1 - rand(20, TOP_SPAWN_PAD);
-
-      // clamp to canvas so nothing starts too far off-screen
       x = Math.max(-60, Math.min(W + 60, x));
-
-      // broader horizontal speeds to avoid vertical strings
       const vx = rand(-0.6, 0.6) + (sceneIdx ? BASE_WIND_SCENE1 : BASE_WIND_SCENE0);
       const vy = rand(0.5, 1.15);
 
@@ -286,72 +247,34 @@ function cacheLampRects() {
   // cheap value-noise for wind jitter
   let __turbTick = 1.0;
   function turb(x, y) {
-    // blend two sines → smooth pseudo-noise in [-1,1]
     return Math.sin((x + __turbTick) * 0.007) * 0.7 +
            Math.sin((y - __turbTick * 0.6) * 0.013) * 0.3;
   }
 
-  /* ---------- USER INTERACTION (drag / hover) ---------- */
   function lampIndexAtCanvasPoint(x, y){
-  for (let i = 0; i < LAMP_RECTS.length; i++){
-    const r = LAMP_RECTS[i];
-    if (x >= r.x1 && x <= r.x2 && y >= r.y1 && y <= r.y2) return i;
+    for (let i = 0; i < LAMP_RECTS.length; i++){
+      const r = LAMP_RECTS[i];
+      if (x >= r.x1 && x <= r.x2 && y >= r.y1 && y <= r.y2) return i;
+    }
+    return -1;
   }
-  return -1;
-}
 
-function updateCanvasCursorForLamp(e){
-  const rect = canvas.getBoundingClientRect();
-  const x = e.clientX - rect.left;
-  const y = e.clientY - rect.top;
-  const overLamp = lampIndexAtCanvasPoint(x, y) >= 0;
-  canvas.style.cursor = overLamp ? "pointer" : "default";
-}
-
-function handleCanvasClick(e){
-  const rect = canvas.getBoundingClientRect();
-  const x = e.clientX - rect.left;
-  const y = e.clientY - rect.top;
-  if (lampIndexAtCanvasPoint(x, y) >= 0){
-    // Toggle ALL lamps with a single click
-    window.__toggleLamps?.();
-    // Prevent this click from also being treated as a "throw" impulse
-    e.stopPropagation();
-    e.preventDefault();
-  }
-}
-
-  let dragging = false;
-  let lastX = 0, lastY = 0;
-
-  function handleMove(e) {
-    if (!dragging) return;
+  function updateCanvasCursorForLamp(e){
     const rect = canvas.getBoundingClientRect();
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
-    const dx = x - lastX;
-    const dy = y - lastY;
-    lastX = x;
-    lastY = y;
+    const overLamp = lampIndexAtCanvasPoint(x, y) >= 0;
+    canvas.style.cursor = overLamp ? "pointer" : "default";
+  }
 
-    const influenceRadius = 140;
-    const impulseStrength = 0.45;
-
-    for (let i = 0; i < parts.length; i++) {
-      const p = parts[i];
-      const distX = p.x - x;
-      const distY = p.y - y;
-      const d2 = distX*distX + distY*distY;
-      if (d2 < influenceRadius * influenceRadius) {
-        const falloff = 1 - Math.sqrt(d2) / influenceRadius;
-
-        p.settled = false;
-        const mult = (p.phys?.cursor ?? 1.0);
-
-        p.vx  += dx * impulseStrength * falloff * 0.03 * mult;
-        p.vy  += dy * impulseStrength * falloff * 0.03 * mult;
-        p.spin += (Math.random() - 0.5) * 0.04 * (p.phys?.spin ?? 1.0);
-      }
+  function handleCanvasClick(e){
+    const rect = canvas.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+    if (lampIndexAtCanvasPoint(x, y) >= 0){
+      window.__toggleLamps?.();
+      e.stopPropagation();
+      e.preventDefault();
     }
   }
 
@@ -360,20 +283,18 @@ function handleCanvasClick(e){
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
 
-    const influenceRadius = 160;   // hover reach
-    const impulseStrength = 0.25;  // gentler than drag
+    const influenceRadius = 160;
+    const impulseStrength = 0.25;
 
     for (let i = 0; i < parts.length; i++) {
       const p = parts[i];
       const dx = p.x - x;
       const dy = p.y - y;
-      const d2 = dx * dx + dy * dy;
+      const d2 = dx*dx + dy*dy;
       if (d2 < influenceRadius * influenceRadius) {
         const falloff = 1 - Math.sqrt(d2) / influenceRadius;
         p.settled = false;
         const mult = (p.phys?.cursor ?? 1.0);
-
-        // repel slightly
         p.vx  += dx * impulseStrength * falloff * -0.03 * mult;
         p.vy  += dy * impulseStrength * falloff * -0.03 * mult;
         p.spin += (Math.random() - 0.5) * 0.02 * (p.phys?.spin ?? 1.0);
@@ -382,19 +303,9 @@ function handleCanvasClick(e){
   }
 
   function enableLitterDrag() {
-    // optional full drag (press to “grab”): uncomment if you want it
-    // canvas.addEventListener("mousedown", (e)=>{ dragging = true; const r=canvas.getBoundingClientRect(); lastX=e.clientX-r.left; lastY=e.clientY-r.top; canvas.classList.add("dragging"); });
-    // window.addEventListener("mouseup", ()=>{ dragging=false; canvas.classList.remove("dragging"); });
-    // window.addEventListener("mousemove", handleMove);
-
-    // always-on hover influence
     canvas.addEventListener("mousemove", handleHoverMove);
-
-    // show a hand only when hovering a lamp area
- canvas.addEventListener("mousemove", updateCanvasCursorForLamp);
- // global toggle via canvas click on any lamp rect
- canvas.addEventListener("click", handleCanvasClick);
-
+    canvas.addEventListener("mousemove", updateCanvasCursorForLamp);
+    canvas.addEventListener("click", handleCanvasClick);
   }
 
   function loop() {
@@ -402,28 +313,20 @@ function handleCanvasClick(e){
     const W = canvas.width, H = canvas.height;
     ctx.clearRect(0, 0, W, H);
 
-    // advance turbulence tick for variety
     __turbTick += 1.0;
-
-    const wind = 0; // neutral baseline (mic/scene wind can add to this later)
+    const wind = 0;
 
     for (let i = parts.length - 1; i >= 0; i--) {
       const p = parts[i];
       const phys = p.phys || DEFAULT_PHYS;
 
       if (!p.settled) {
-        // airborne physics
         p.vx  += wind * WIND_K;
-        p.vy  += GRAVITY * phys.g;        // heavier = more gravity
-
-        // air drag
+        p.vy  += GRAVITY * phys.g;
         p.vx *= (1 - phys.air);
         p.vy *= (1 - phys.air * 0.60);
-
-        // a touch of “lift” for light/flat things
         p.vy -= Math.abs(p.vx) * phys.lift;
 
-        // subtle turbulence so paths aren't straight
         const jitterX = turb(p.x, p.y) * 0.02 * phys.turb;
         const jitterY = turb(p.y, p.x) * 0.015 * phys.turb;
         p.vx += jitterX;
@@ -433,33 +336,28 @@ function handleCanvasClick(e){
         p.y   += p.vy;
         p.rot += p.spin;
 
-        // hit ground?
         if (groundY != null) {
           const bottom = p.y + (p.h * 0.5);
           if (bottom >= groundY) {
-            p.y = groundY - (p.h * 0.5); // snap to ground
+            p.y = groundY - (p.h * 0.5);
             p.vy = 0;
-            p.vx *= phys.impact;         // impact damping by mass
+            p.vx *= phys.impact;
             p.spin *= phys.impact * 0.9;
             p.settled = true;
           }
         }
       } else {
-        // ground slide + friction until stopped
         p.x   += p.vx;
         p.rot += p.spin;
         p.vx  *= (p.phys?.groundFriction ?? FRICTION);
         p.spin *= (p.phys?.rotFriction ?? ROT_FRICTION);
-
         if (Math.abs(p.vx) < STOP_EPS) p.vx = 0;
         if (Math.abs(p.spin) < 0.002)  p.spin = 0;
       }
 
-      // purge only if way offscreen
       if (p.y > H + 60 || p.x < -80 || p.x > W + 80) { parts.splice(i, 1); continue; }
 
-      // draw (leaf-style)
-      ctx.globalAlpha = 1; // ALWAYS fully opaque
+      ctx.globalAlpha = 1;
       ctx.save();
       ctx.translate(Math.round(p.x), Math.round(p.y));
       ctx.rotate(p.rot);
@@ -470,7 +368,6 @@ function handleCanvasClick(e){
         ctx.imageSmoothingQuality = "high";
         ctx.drawImage(p.img, -p.w/2, -p.h/2, p.w, p.h);
       } else {
-        // minimal fallback
         ctx.fillStyle = "rgba(230,230,230,1)";
         const r = 2, x0 = -p.w/2, y0 = -p.h/2, w = p.w, h = p.h;
         ctx.beginPath();
@@ -486,8 +383,6 @@ function handleCanvasClick(e){
     }
 
     requestAnimationFrame(loop);
- 
-
   }
 
   function init() {
@@ -495,39 +390,28 @@ function handleCanvasClick(e){
     if (!canvas) return;
     ctx = canvas.getContext("2d", { alpha: true });
     canvas.style.touchAction = "none";
-    canvas.style.pointerEvents = "auto";   // interactive
-
+    canvas.style.pointerEvents = "auto";
     sizeCanvas();
     window.addEventListener("resize", sizeCanvas);
     enableLitterDrag();
-
     requestAnimationFrame(loop);
   }
 
-  // expose for your scroll code
   window.__refreshLampLitterRects = cacheLampRects;
   window.__refreshLampGroundLine  = cacheGroundLine;
 
   document.addEventListener("DOMContentLoaded", init);
   init();
-  // IMPORTANT: preload the litter sprites for the scene packs
   preloadSprites();
 })();
 
 /* ---------- HELPERS ---------- */
 function disableCityClicks(){
   const r = document.getElementById("cityClickRouter");
-  if (r){
-    r.style.display = "none";
-    r.style.pointerEvents = "none";
-    r.style.cursor = "default";
-  }
-  const hit = document.getElementById("cityHit");
-  if (hit) hit.style.pointerEvents = "none";
-  const sparks = document.getElementById("citySparks");
-  if (sparks) sparks.style.display = "none";
-  const bgCity = document.getElementById("bgCity");
-  if (bgCity) bgCity.style.cursor = "default";
+  if (r){ r.style.display = "none"; r.style.pointerEvents = "none"; r.style.cursor = "default"; }
+  const hit = document.getElementById("cityHit"); if (hit) hit.style.pointerEvents = "none";
+  const sparks = document.getElementById("citySparks"); if (sparks) sparks.style.display = "none";
+  const bgCity = document.getElementById("bgCity"); if (bgCity) bgCity.style.cursor = "default";
 }
 function cityIsVisible(){
   const b = document.querySelector("#bgCity .back");
@@ -547,12 +431,9 @@ function enableCityClicks(){
     r.style.pointerEvents = show ? "auto" : "none";
     r.style.cursor = show ? "crosshair" : "default";
   }
-  const hit = document.getElementById("cityHit");
-  if (hit) hit.style.pointerEvents = show ? "auto" : "none";
-  const sparks = document.getElementById("citySparks");
-  if (sparks) sparks.style.display = show ? "block" : "none";
-  const bgCity = document.getElementById("bgCity");
-  if (bgCity) bgCity.style.cursor = show ? "crosshair" : "default";
+  const hit = document.getElementById("cityHit"); if (hit) hit.style.pointerEvents = show ? "auto" : "none";
+  const sparks = document.getElementById("citySparks"); if (sparks) sparks.style.display = show ? "block" : "none";
+  const bgCity = document.getElementById("bgCity"); if (bgCity) bgCity.style.cursor = show ? "crosshair" : "default";
 }
 
 function preload(srcs){
@@ -593,20 +474,20 @@ function buildStack(containerId, classBase, srcs){
   srcs.forEach((src, i) => {
     const im = document.createElement("img");
     im.className = classBase + " stage" + i;
-    im.src = src;
-    im.alt = classBase + " stage " + i;
+    im.src = src; im.alt = classBase + " stage " + i;
     im.style.opacity = (i === 0 ? "1" : "0");
     el.appendChild(im);
   });
 }
+
+/* ---------- Per-scene lamp configs ---------- */
 function setLampConfig(containerSel, config){
   const wraps = document.querySelectorAll(containerSel + " .lampWrap");
   wraps.forEach((wrap) => {
     if (!wrap.querySelector(".lamp-glow")) {
       const glow = document.createElement("div"); glow.className = "lamp-glow";
       const beam = document.createElement("div"); beam.className = "lamp-beam";
-      wrap.appendChild(glow);
-      wrap.appendChild(beam);
+      wrap.appendChild(glow); wrap.appendChild(beam);
       wrap.classList.remove("on");
     }
     if (!wrap.querySelector(".lamp-hit")) {
@@ -615,61 +496,75 @@ function setLampConfig(containerSel, config){
     }
 
     const css = wrap.style;
-    css.setProperty("--bx",     config.bx);
-    css.setProperty("--by",     config.by);
-    css.setProperty("--bxpx",   config.bxpx || "0px");
-    css.setProperty("--bypx",   config.bypx || "0px");
+    css.setProperty("--bx",   config.bx);
+    css.setProperty("--by",   config.by);
+    css.setProperty("--bw",   config.bw);
+    css.setProperty("--bh",   config.bh);
 
-    css.setProperty("--bw",     config.bw);
-    css.setProperty("--bh",     config.bh);
+    css.setProperty("--beamW", config.beamW);
+    css.setProperty("--beamH", config.beamH);
+    css.setProperty("--beamY", config.beamY);
 
-    css.setProperty("--beamW",  config.beamW);
-    css.setProperty("--beamH",  config.beamH);
-    css.setProperty("--beamX",  config.beamX || "");
-    css.setProperty("--beamY",  config.beamY);
+    /* new: oval controls + hue */
+    css.setProperty("--gScaleX", config.gScaleX || "1");
+    css.setProperty("--gScaleY", config.gScaleY || "1");
+    css.setProperty("--hue",     config.hue || "40deg");
 
-    /* circle-specific vars */
-    css.setProperty("--beamD",        config.beamD || "");
-    css.setProperty("--beamYOffset",  config.beamYOffset || "0px");
-
-    /* toggle circle mode */
+    /* circle vs street styles */
     wrap.classList.toggle("isLantern", !!config.beamCircle);
+    wrap.classList.toggle("isStreet",  !config.beamCircle);
   });
 
   window.__refreshLampLitterRects?.();
 }
 
 
-
+/* Lantern (circle) */
 const LANTERN_CFG = {
-bx: "calc(50% + 55px)",   
- by: "calc(22% + 200px)",
-  bw:"68px",  // tighter glow (optional)
-  bh:"68px",  // ^
-  beamW:"260px", // a touch wider (optional)
-  beamH:"260px", // a bit shorter (optional)
-  beamY:"20px", // was 140px → lift cone slightly; increase to drop further
- bw: "64px", bh: "64px",
-
- beamCircle: true,          // <-- enable circle
-  beamD: "220px",            // diameter of the circle
-  beamYOffset: "-60px",      // nudge up/down to sit inside the lantern
+  beamCircle: true,
+  bx: "calc(50% + 55px)",
+  by: "calc(22% + 200px)",
+  bw: "64px",  bh: "64px",
+  beamD: "220px",
+  beamYOffset: "-60px",
+  beamW: "260px", beamH: "260px", beamY: "20px",
   hue: "40deg",
-
- 
+  glowOn: "0.95",
+  beamOn: "0.90",
+  hitW: "110px", hitH: "65%", hitTop: "200px"
 };
 
+/* Streetlight (cone) */
 const STREETLIGHT_CFG = {
- bx:"99%",   // was 50% → shift RIGHT
-  by:"50%",   // was 15% → shift DOWN
-  bw:"68px",  // tighter glow (optional)
-  bh:"68px",  // ^
-  beamW:"260px", // a touch wider (optional)
-  beamH:"260px", // a bit shorter (optional)
-  beamY:"128px", // was 140px → lift cone slightly; increase to drop further
-  hue:"40deg"
+  beamCircle: false,
+  /* bulb center */
+  bx:  "calc(50% + 60px)",   // was +6px → nudge RIGHT
+  by:  "calc(8% + 180px)",   // was +148px → push DOWN
+
+  /* inner glow size */
+  bw:  "60px",
+  bh:  "60px",
+  /* oval shaping */
+  gScaleX: "1.35",       // wider
+  gScaleY: "0.75",       // flatter
+  /* cone footprint */
+  beamW: "330px",            // a touch wider
+  beamH: "400px",            // a bit longer
+  beamY: "30px",             // distance from bulb → cone apex (slightly shorter after moving bulb down)
+
+  /* color & intensity */
+  hue:    "200deg",          // cooler blue-white
+  glowOn: "1.00",            // max (CSS opacity caps at 1)
+  beamOn: "0.98",
+
+  /* click zone (unchanged) */
+  hitW: "110px",
+  hitH: "65%",
+  hitTop: "200px"
 };
-// --- Global lamps ON/OFF state & helpers ---
+
+
+/* ---------- Lamps ON/OFF ---------- */
 window.__lampsOn = false;
 
 function __setLampsOn(on){
@@ -677,7 +572,6 @@ function __setLampsOn(on){
     .forEach(w => w.classList.toggle("on", on));
   window.__lampsOn = on;
 
-  // optional brief start-up flicker when turning ON
   if (on){
     document.querySelectorAll("#lampsRow .lampWrap")
       .forEach(w => {
@@ -685,14 +579,9 @@ function __setLampsOn(on){
         setTimeout(()=> w.classList.remove("flicker"), 900);
       });
   }
-
-  // broadcast for future effects (chimneys, etc.)
   window.dispatchEvent(new CustomEvent("lamps:state", { detail:{ on } }));
 }
-
-window.__toggleLamps = function(){
-  __setLampsOn(!window.__lampsOn);
-};
+window.__toggleLamps = function(){ __setLampsOn(!window.__lampsOn); };
 
 /* ---------- BUILD LAYERS ---------- */
 function buildGroundStack(){ buildStack("lampsGroundStack", "ground", GROUND_SRC); }
@@ -718,16 +607,25 @@ function buildLampRow(n = 5){
   }
 }
 
-/* ---------- CROSSFADES ---------- */
+/* ---------- CROSSFADES & CONFIG SWITCHES ---------- */
 function buildCrossfade(){
   const HOLD_START = XFADE_HOLD_START, HOLD_END = XFADE_HOLD_END;
   const segs = LAMP_SRC.length - 1;
   const segDur = (1 - HOLD_START - HOLD_END) / segs;
   const tl = gsap.timeline({ paused: true });
 
-  // retarget click geometry once we pass into stage 1 visuals
-tl.add(() => setLampConfig("#lampsScene", STREETLIGHT_CFG),
-         HOLD_START + 1 * segDur + 0.001);
+  // on scrub TO stage 1 → swap to streetlight & force OFF
+  const tToStreet = HOLD_START + 1 * segDur + 0.001;
+  tl.add(() => {
+    setLampConfig("#lampsScene", STREETLIGHT_CFG);
+    __setLampsOn(false);
+  }, tToStreet);
+
+  // on scrub BACK to the very start → restore lantern & OFF
+  tl.add(() => {
+    setLampConfig("#lampsScene", LANTERN_CFG);
+    __setLampsOn(false);
+  }, 0);
 
   function fadeLamps(t, a, b){
     document.querySelectorAll("#lampsRow .lampWrap").forEach(w => {
@@ -761,7 +659,7 @@ tl.add(() => setLampConfig("#lampsScene", STREETLIGHT_CFG),
 /* ---------- INIT ---------- */
 const ALL = [
   ...LAMP_SRC, ...GROUND_SRC, ...NEAR_SRC, ...FAR_SRC, NEAR_REF,
-  ...LITTER_ALL // ✅ use the new litter list, not the old LITTER_SPRITES
+  ...LITTER_ALL
 ];
 
 preload(ALL).then(async () => {
@@ -771,9 +669,11 @@ preload(ALL).then(async () => {
   buildFarParallax();
   buildNearParallax();
   buildLampRow(5);
-  setLampConfig("#lampsScene", LANTERN_CFG);
 
-  // Nudge the litter module to know lamp positions/ground line
+  /* start in lantern style, lights OFF */
+  setLampConfig("#lampsScene", LANTERN_CFG);
+  __setLampsOn(false);
+
   window.__refreshLampGroundLine?.();
   window.__refreshLampLitterRects?.();
   window.dispatchEvent(new Event("resize"));
@@ -794,7 +694,6 @@ preload(ALL).then(async () => {
     onLeaveBack(){ enableCityClicks(); },
 
     onUpdate(self){
-      // crossfades
       xfade.progress(self.progress);
 
       // litter spawns tied to scroll distance
@@ -803,12 +702,12 @@ preload(ALL).then(async () => {
       const p  = self.progress;
       const dp = p - LT.p;
 
-      if (p < XFADE_HOLD_START) LT.acc += 40; // baseline while in stage 0
-      LT.acc  += Math.abs(dp) * 1000;         // “budget”
-      LT.wind += (Math.random() - 0.5) * 60;  // drift noise
+      if (p < XFADE_HOLD_START) LT.acc += 40;
+      LT.acc  += Math.abs(dp) * 1000;
+      LT.wind += (Math.random() - 0.5) * 60;
       LT.p     = p;
 
-      const sceneIdx = sceneFromProgress(p);  // 0/1/2 mapper
+      const sceneIdx = sceneFromProgress(p);
       while (LT.acc > 85){
         window.spawnLampLitter?.(sceneIdx, 4 + (Math.random()*4|0));
         LT.acc -= 85;
@@ -817,12 +716,11 @@ preload(ALL).then(async () => {
       gsap.set("#parallaxNearStack", { x: 0 });
       gsap.set("#parallaxFarStack",  { x: 0 });
     },
-    onRefresh(self){},
+    onRefresh(){},
     invalidateOnRefresh: true,
     onRefreshInit(){ xfade.progress(0); }
   });
 
-  // responsive
   const refresh = () => {
     document.getElementById("lampsRow")
       .style.setProperty("--lampH", computeLampHeightPx());
@@ -834,7 +732,7 @@ preload(ALL).then(async () => {
   requestAnimationFrame(() => ScrollTrigger.refresh());
 });
 
-/* ---------- SEED ---------- */
+/* ---------- SEED (optional) ---------- */
 function __seedInitialLitter(){
   requestAnimationFrame(()=>{
     window.__refreshLampLitterRects?.();

@@ -2,16 +2,14 @@
 #lampsScene{
   position: relative;
   width: 100vw;
-   min-height: 100vh;      /* full-screen pin like your other scenes */
+  min-height: 100vh;      /* full-screen pin */
   overflow: hidden;
   background: transparent;
-   opacity: 0;
+  opacity: 0;
   transform: translateY(5vh);
   will-change: opacity, transform;
-  z-index: 2; 
-
+  z-index: 2;
 }
-
 
 #lampsGroundBase{
   position:absolute; left:0; bottom:0;
@@ -20,7 +18,7 @@
 
 /* stacked ground fades (5→8) */
 #lampsGroundStack{
-  position:absolute; inset:0; z-index:3; 
+  position:absolute; inset:0; z-index:3;
 }
 #lampsGroundStack img.ground{
   position:absolute; left:0; right:0; bottom:0;
@@ -42,10 +40,11 @@
 #lampsRow .lamp{
   position:absolute; left:50%; bottom:0; transform:translateX(-50%);
   width:auto; max-height:100%;
-  opacity:0; 
+  opacity:0;
   filter:drop-shadow(0 6px 16px rgba(0,0,0,.35));
 }
 
+/* Far parallax */
 #parallaxFarStack{
   position:absolute; left:0; right:0; bottom:0;
   z-index:1; pointer-events:none;
@@ -58,26 +57,23 @@
   opacity:0; will-change:opacity, transform;
 }
 
-
 /* shared knob for size (mirrors your --forestSizeMult) */
 :root{ --citySizeMult: 1.35; }
+
 /* Near parallax sits above ground, below lamps */
 #parallaxNearStack{
   position:absolute; left:0; right:0; bottom:0;
   z-index:2; pointer-events:none;
-  /* Height = viewport width / aspect ratio (AR is set by JS from the ref image) */
-  height: calc(100vw / var(--nearAR, 2.40)); /* 2.40 is a safe fallback */
+  height: calc(100vw / var(--nearAR, 2.40));
 }
-
-/* Each near-city image fills width, bottom anchored, and cross-fades */
 #parallaxNearStack img{
   position:absolute; left:50%; bottom:0;
   transform: translateX(-50%);
-  width:100%; height:auto;      /* preserve ref geometry */
+  width:100%; height:auto;
   opacity:0; will-change: opacity, transform;
 }
 
-/* (Already present) stacking order reminder */
+/* stacking order reminder */
 #lampsGroundBase  { z-index:1; }
 #parallaxNearStack{ z-index:2; }
 #lampsGroundStack { z-index:3; }
@@ -96,34 +92,51 @@
   --bh: 92px;  /* glow height */
   --beamW: 240px;
   --beamH: 300px;
-  --beamY: 90px;   /* distance from bulb to beam start */
-  --hue: 40deg;    /* 40° = warm lantern, 58° = cold streetlight */
+  --beamY: 90px;    /* distance from bulb to beam start */
+  --hue: 40deg;     /* 40° = warm lantern, 58°+ = cold streetlight */
+  --glowOn: .95;    /* per-scene intensity controls */
+  --beamOn: .85;
 }
 
+/* CLICKABLE AREA (geometry only; canvas handles click logic) */
+.lampWrap .lamp-hit{
+  position:absolute;
+  left: calc(50% - var(--hitW, 110px)/2);
+  top:  var(--hitTop, 200px);
+  width: var(--hitW, 110px);
+  height: var(--hitH, 65%);
+  pointer-events: none; /* we only read its rect for hit testing on canvas */
+}
 
-
-/* inner bulb glow (CSS only) */
+/* base glow now supports oval shaping */
 .lampWrap .lamp-glow{
   position:absolute;
-  left: var(--bx);
-  top:  var(--by);
-  width: var(--bw);
-  height: var(--bh);
-  transform: translate(-50%, 0);
-  pointer-events:none;
-  opacity:0;
-  background:
-    radial-gradient(ellipse at 50% 35%,
-      hsla(var(--hue), 80%, 85%, .9) 0%,
-      hsla(var(--hue), 90%, 72%, .55) 35%,
-      hsla(var(--hue), 95%, 58%, .30) 60%,
-      rgba(0,0,0,0) 78%);
+  left: var(--bx,50%); top: var(--by,0%);
+  width: var(--bw,80px); height: var(--bh,80px);
+  transform: translate(-50%, -50%) scale(var(--gScaleX,1), var(--gScaleY,1));
+  /* circle by default; streetlight will override with ellipse center lower */
+  background: radial-gradient(closest-side,
+              rgba(255,240,180,0.95), rgba(255,240,180,0) 70%);
+  border-radius: 999px;
+  filter: blur(2px);
+  opacity: 0;
+  pointer-events: none;
+  z-index: 3;
   mix-blend-mode: screen;
-  filter: blur(1px);
-  transition: opacity .18s linear;
 }
 
-/* downward beam */
+/* cooler, oval glow for streetlight */
+.lampWrap.isStreet .lamp-glow{
+  /* put hotspot slightly below center so it hugs the hood */
+  background: radial-gradient(ellipse at 50% 62%,
+              hsla(var(--hue,200deg), 90%, 88%, 0.95) 0%,
+              hsla(var(--hue,200deg), 80%, 70%, 0.50) 35%,
+              hsla(var(--hue,200deg), 70%, 55%, 0.22) 60%,
+              rgba(0,0,0,0) 80%);
+}
+
+
+/* default = cone beam */
 .lampWrap .lamp-beam{
   position:absolute;
   left: var(--bx);
@@ -133,102 +146,40 @@
   transform: translateX(-50%);
   pointer-events:none;
   opacity:0;
-  background:
-    radial-gradient(ellipse at 50% 0%,
-      rgba(255,235,170,.85) 0%,
-      rgba(255,215,130,.40) 25%,
-      rgba(200,170,90,.18) 48%,
-      rgba(160,140,90,0) 75%);
+  background: radial-gradient(ellipse at 50% 0%,
+              rgba(255,255,230,0.65) 0%,
+              rgba(210,220,255,0.28) 32%,
+              rgba(160,180,255,0.00) 78%);
   clip-path: polygon(50% 0%, 100% 100%, 0% 100%);
   mix-blend-mode: screen;
-  filter: blur(1px);
-  transition: opacity .18s linear;
-}
-
-/* ON state */
-.lampWrap.on .lamp-glow{ opacity:.95; }
-.lampWrap.on .lamp-beam{ opacity:.85; }
-
-/* make sure the row can receive clicks */
-#lampsRow{ pointer-events:auto; }
-/* ========== CLICKABLE LAMP HIT AREA ========== */
-.lampWrap .lamp-hit{
-  position:absolute;
-  /* centered over the pole; tweak per style via CSS vars if needed */
-  left: calc(50% - var(--hitW, 28px)/2);
-  top:  var(--hitTop, 0px);
-  width: var(--hitW, 28px);
-  height: var(--hitH, var(--lampH));
-  pointer-events: none; /* clicks are handled on the canvas; this is for geometry only */
-}
-#lampsScene .lampWrap .lamp-hit{
-  --hitW: 110px;         /* width  → make this bigger to widen */
-  --hitH: 65%;          /* height → smaller % = less tall (or use px) */
-  --hitTop: 200px;       /* top offset → pushes the box down */
-}
-/* soft glow circle that sits inside the lantern head */
- .lampWrap .lamp-glow{
-  position:absolute;
-  left: var(--bx,50%); top: var(--by,0%);
-  width: var(--bw,80px); height: var(--bh,80px);
-  transform: translate(-50%, -50%);
-  border-radius: 999px;
-  background: radial-gradient(closest-side, rgba(255,240,180,0.95), rgba(255,240,180,0.0) 70%);
-  filter: blur(2px);
-  opacity: 0;
-  pointer-events: none;
-  z-index: 3;
-  mix-blend-mode: screen;
-}
-
-/* downward beam */
- .lampWrap .lamp-beam{
-  position:absolute;
-  left: var(--bx,50%); top: calc(var(--by,0%) + var(--beamY,90px));
-  width: var(--beamW,260px); height: var(--beamH,280px);
-  transform: translate(-50%, 0);
-  background: radial-gradient(ellipse at 50% 0%,
-              rgba(255,240,180,0.40) 0%,
-              rgba(255,240,180,0.18) 40%,
-              rgba(255,240,180,0.00) 100%);
   filter: blur(1.5px);
-  opacity: 0;
-  pointer-events: none;
+  transition: opacity .18s linear;
   z-index: 2;
-  mix-blend-mode: screen;
 }
-/* default = cone (your current styles stay as-is) */
 
-/* circle mode for the lantern */
+/* circle mode for the lantern (overrides cone) */
 .lampWrap.isLantern .lamp-beam {
-  /* make it a circle */
   width: var(--beamD, 220px);
   height: var(--beamD, 220px);
   border-radius: 50%;
   clip-path: none;
-
-  /* gentle radial falloff */
   background: radial-gradient(
     circle,
     rgba(255, 240, 180, 0.45) 0%,
     rgba(255, 240, 180, 0.18) 40%,
     rgba(255, 240, 180, 0.00) 70%
   );
-
-  /* position tweaks */
   left: calc(var(--beamX, var(--bx)) + var(--bxpx, 0px));
-   top:  calc(var(--by) + var(--beamYOffset, 0px));
+  top:  calc(var(--by) + var(--beamYOffset, 0px));
   filter: blur(2px);
   opacity: 0;
 }
 
-/* ON state (steady) */
-#lampsScene .lampWrap.on .lamp-glow,
-#lampsScene .lampWrap.on .lamp-beam{
-  opacity: 1;
-}
+/* ON state uses per-scene intensities */
+#lampsScene .lampWrap.on .lamp-glow{ opacity: var(--glowOn, .95); }
+#lampsScene .lampWrap.on .lamp-beam{ opacity: var(--beamOn, .85); }
 
-/* brief startup flicker (only while class .flicker is present) */
+/* brief startup flicker (only while .flicker is present) */
 @keyframes lampFlicker {
   0%,100%{opacity:1}
   6%{opacity:.5}
@@ -245,17 +196,16 @@
   animation: lampFlicker 900ms linear infinite;
 }
 
+/* litter canvas */
 #litterCanvas{
   position:absolute;
   inset:0;
   width:100%;
   height:100%;
-  z-index:40;              
-  pointer-events:auto;    
+  z-index:40;
+  pointer-events:auto;
   isolation:isolate;
-    cursor:default;           
-     transition: cursor 0.2s;
+  cursor:default;
+  transition: cursor 0.2s;
 }
-#litterCanvas.dragging {
-  cursor: grabbing;
-}
+#litterCanvas.dragging { cursor: grabbing; }
