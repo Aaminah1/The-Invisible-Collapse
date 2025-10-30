@@ -567,25 +567,33 @@ const STREETLIGHT_CFG = {
 /* ---------- Lamps ON/OFF ---------- */
 window.__lampsOn = false;
 
-function __setLampsOn(on){
+function __setLampsOn(on, opts = {}) {
+  const noFlicker = !!opts.noFlicker;
+
   document.querySelectorAll("#lampsRow .lampWrap")
     .forEach(w => w.classList.toggle("on", on));
   window.__lampsOn = on;
 
-  if (on){
+  if (on && !noFlicker) {          // only flicker when we *actively* turn on
     document.querySelectorAll("#lampsRow .lampWrap")
       .forEach(w => {
         w.classList.add("flicker");
-        setTimeout(()=> w.classList.remove("flicker"), 900);
+        setTimeout(() => w.classList.remove("flicker"), 900);
       });
   }
-  window.dispatchEvent(new CustomEvent("lamps:state", { detail:{ on } }));
-  window.addEventListener("lamps:state", (e)=>{
-  const on = !!e.detail?.on;
-  window.__smokeEnable?.(on);     // emit only when ON
-});
+
+  // (Move the listener OUTSIDE to avoid re-adding it each call)
+  window.dispatchEvent(new CustomEvent("lamps:state", { detail: { on } }));
 }
+// one-time listener (was inside the function before — that caused duplicates)
+window.addEventListener("lamps:state", (e) => {
+  const on = !!e.detail?.on;
+  window.__smokeEnable?.(on);  // your smoke still follows lamp state
+});
+
 window.__toggleLamps = function(){ __setLampsOn(!window.__lampsOn); };
+
+
 
 /* ---------- BUILD LAYERS ---------- */
 function buildGroundStack(){ buildStack("lampsGroundStack", "ground", GROUND_SRC); }
@@ -619,17 +627,21 @@ function buildCrossfade(){
   const tl = gsap.timeline({ paused: true });
 
   // on scrub TO stage 1 → swap to streetlight & force OFF
-  const tToStreet = HOLD_START + 1 * segDur + 0.001;
-  tl.add(() => {
-    setLampConfig("#lampsScene", STREETLIGHT_CFG);
-    __setLampsOn(false);
-  }, tToStreet);
+  // on scrub TO stage 1 → swap to streetlight & KEEP current lamp state
+const tToStreet = HOLD_START + 1 * segDur + 0.001;
+tl.add(() => {
+  const keep = window.__lampsOn;                // remember current ON/OFF
+  setLampConfig("#lampsScene", STREETLIGHT_CFG);
+  __setLampsOn(keep, { noFlicker: true });      // restore without flicker
+}, tToStreet);
 
-  // on scrub BACK to the very start → restore lantern & OFF
-  tl.add(() => {
-    setLampConfig("#lampsScene", LANTERN_CFG);
-    __setLampsOn(false);
-  }, 0);
+// on scrub BACK to the very start → restore lantern & KEEP current lamp state
+tl.add(() => {
+  const keep = window.__lampsOn;
+  setLampConfig("#lampsScene", LANTERN_CFG);
+  __setLampsOn(keep, { noFlicker: true });
+}, 0);
+
 
   function fadeLamps(t, a, b){
     document.querySelectorAll("#lampsRow .lampWrap").forEach(w => {
