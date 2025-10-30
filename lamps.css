@@ -30,7 +30,7 @@
 
 /* lampposts */
 #lampsRow{
-  position:absolute; inset:0; z-index:5; pointer-events:none;
+  position:absolute; inset:0; z-index:6; pointer-events:auto;
 }
 #lampsRow .lampWrap{
   position:absolute; bottom:0;
@@ -42,7 +42,7 @@
 #lampsRow .lamp{
   position:absolute; left:50%; bottom:0; transform:translateX(-50%);
   width:auto; max-height:100%;
-  opacity:0; pointer-events:none;
+  opacity:0; 
   filter:drop-shadow(0 6px 16px rgba(0,0,0,.35));
 }
 
@@ -81,7 +81,7 @@
 #lampsGroundBase  { z-index:1; }
 #parallaxNearStack{ z-index:2; }
 #lampsGroundStack { z-index:3; }
-#lampsRow         { z-index:6;pointer-events: none;  }
+
 /* -------------------------------------------------
    Lamp click → ON/OFF visuals
    The glow/beam follow CSS variables we set from JS
@@ -100,16 +100,7 @@
   --hue: 40deg;    /* 40° = warm lantern, 58° = cold streetlight */
 }
 
-/* clickable bulb hit area */
-.lampWrap .lamp-hit{
-  position:absolute;
-  left: var(--bx);
-  top:  var(--by);
-  width: var(--bw);
-  height: var(--bh);
-  transform: translate(-50%, 0);
 
-}
 
 /* inner bulb glow (CSS only) */
 .lampWrap .lamp-glow{
@@ -161,17 +152,20 @@
 /* make sure the row can receive clicks */
 #lampsRow{ pointer-events:auto; }
 /* ========== CLICKABLE LAMP HIT AREA ========== */
- .lampWrap { position: absolute; bottom: 0; }
- .lampWrap .lamp-hit{
+.lampWrap .lamp-hit{
   position:absolute;
-  left: var(--bx,50%); top: var(--by,0%);
-  width: var(--bw,80px); height: var(--bh,80px);
-  transform: translate(-50%, -50%);
- pointer-events: auto; cursor: pointer;           /* show hand only on the lamp */
-  background: transparent;
-  z-index: 7;
+  /* centered over the pole; tweak per style via CSS vars if needed */
+  left: calc(50% - var(--hitW, 28px)/2);
+  top:  var(--hitTop, 0px);
+  width: var(--hitW, 28px);
+  height: var(--hitH, var(--lampH));
+  pointer-events: none; /* clicks are handled on the canvas; this is for geometry only */
 }
-
+#lampsScene .lampWrap .lamp-hit{
+  --hitW: 110px;         /* width  → make this bigger to widen */
+  --hitH: 65%;          /* height → smaller % = less tall (or use px) */
+  --hitTop: 200px;       /* top offset → pushes the box down */
+}
 /* soft glow circle that sits inside the lantern head */
  .lampWrap .lamp-glow{
   position:absolute;
@@ -203,6 +197,30 @@
   z-index: 2;
   mix-blend-mode: screen;
 }
+/* default = cone (your current styles stay as-is) */
+
+/* circle mode for the lantern */
+.lampWrap.isLantern .lamp-beam {
+  /* make it a circle */
+  width: var(--beamD, 220px);
+  height: var(--beamD, 220px);
+  border-radius: 50%;
+  clip-path: none;
+
+  /* gentle radial falloff */
+  background: radial-gradient(
+    circle,
+    rgba(255, 240, 180, 0.45) 0%,
+    rgba(255, 240, 180, 0.18) 40%,
+    rgba(255, 240, 180, 0.00) 70%
+  );
+
+  /* position tweaks */
+  left: calc(var(--beamX, var(--bx)) + var(--bxpx, 0px));
+   top:  calc(var(--by) + var(--beamYOffset, 0px));
+  filter: blur(2px);
+  opacity: 0;
+}
 
 /* ON state (steady) */
 #lampsScene .lampWrap.on .lamp-glow,
@@ -232,10 +250,10 @@
   inset:0;
   width:100%;
   height:100%;
-  z-index:40;              /* < keep it BELOW #lampsRow (z=4/5) */
-  pointer-events:auto;    /* < allow clicks/drags */
+  z-index:40;              
+  pointer-events:auto;    
   isolation:isolate;
-    cursor: pointer;            /* nice affordance */
+    cursor:default;           
      transition: cursor 0.2s;
 }
 #litterCanvas.dragging {

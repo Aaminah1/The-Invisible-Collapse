@@ -170,18 +170,28 @@ function keyFromSrc(src=""){
     cacheGroundLine();
   }
 
-  function cacheLampRects() {
-    LAMP_RECTS = [];
-    if (!canvas) return;
-    const cb = canvas.getBoundingClientRect();
-    document.querySelectorAll('#lampsRow .lampWrap').forEach(w => {
-      const r = w.getBoundingClientRect();
-      LAMP_RECTS.push({
-        x1: r.left - cb.left, x2: r.right - cb.left,
-        y1: r.top  - cb.top,  y2: r.bottom - cb.top
-      });
+function cacheLampRects() {
+  LAMP_RECTS = [];
+  if (!canvas) return;
+
+  const cb = canvas.getBoundingClientRect();
+
+  document.querySelectorAll('#lampsRow .lampWrap').forEach(w => {
+    // Prefer the dedicated .lamp-hit; fall back to the wrap if missing
+    const target = w.querySelector('.lamp-hit') || w;
+    const r = target.getBoundingClientRect();
+
+    // No padding → gaps between posts won't register clicks
+    LAMP_RECTS.push({
+      x1: r.left  - cb.left,
+      x2: r.right - cb.left,
+      y1: r.top   - cb.top,
+      y2: r.bottom- cb.top
     });
-  }
+  });
+}
+
+
 
   function cacheGroundLine() {
     groundY = null;
@@ -282,6 +292,35 @@ function keyFromSrc(src=""){
   }
 
   /* ---------- USER INTERACTION (drag / hover) ---------- */
+  function lampIndexAtCanvasPoint(x, y){
+  for (let i = 0; i < LAMP_RECTS.length; i++){
+    const r = LAMP_RECTS[i];
+    if (x >= r.x1 && x <= r.x2 && y >= r.y1 && y <= r.y2) return i;
+  }
+  return -1;
+}
+
+function updateCanvasCursorForLamp(e){
+  const rect = canvas.getBoundingClientRect();
+  const x = e.clientX - rect.left;
+  const y = e.clientY - rect.top;
+  const overLamp = lampIndexAtCanvasPoint(x, y) >= 0;
+  canvas.style.cursor = overLamp ? "pointer" : "default";
+}
+
+function handleCanvasClick(e){
+  const rect = canvas.getBoundingClientRect();
+  const x = e.clientX - rect.left;
+  const y = e.clientY - rect.top;
+  if (lampIndexAtCanvasPoint(x, y) >= 0){
+    // Toggle ALL lamps with a single click
+    window.__toggleLamps?.();
+    // Prevent this click from also being treated as a "throw" impulse
+    e.stopPropagation();
+    e.preventDefault();
+  }
+}
+
   let dragging = false;
   let lastX = 0, lastY = 0;
 
@@ -350,6 +389,12 @@ function keyFromSrc(src=""){
 
     // always-on hover influence
     canvas.addEventListener("mousemove", handleHoverMove);
+
+    // show a hand only when hovering a lamp area
+ canvas.addEventListener("mousemove", updateCanvasCursorForLamp);
+ // global toggle via canvas click on any lamp rect
+ canvas.addEventListener("click", handleCanvasClick);
+
   }
 
   function loop() {
@@ -441,6 +486,8 @@ function keyFromSrc(src=""){
     }
 
     requestAnimationFrame(loop);
+ 
+
   }
 
   function init() {
@@ -552,50 +599,99 @@ function buildStack(containerId, classBase, srcs){
     el.appendChild(im);
   });
 }
-function attachLampToggle(containerSel, config){
+function setLampConfig(containerSel, config){
   const wraps = document.querySelectorAll(containerSel + " .lampWrap");
-  wraps.forEach((wrap, i) => {
+  wraps.forEach((wrap) => {
     if (!wrap.querySelector(".lamp-glow")) {
       const glow = document.createElement("div"); glow.className = "lamp-glow";
       const beam = document.createElement("div"); beam.className = "lamp-beam";
-      const hit  = document.createElement("div"); hit.className  = "lamp-hit";
-      wrap.appendChild(glow); wrap.appendChild(beam); wrap.appendChild(hit);
+      wrap.appendChild(glow);
+      wrap.appendChild(beam);
       wrap.classList.remove("on");
-      hit.addEventListener("mouseenter", ()=> wrap.classList.add("hover"));
-      hit.addEventListener("mouseleave", ()=> wrap.classList.remove("hover"));
-      hit.addEventListener("click", () => {
-        const turningOn = !wrap.classList.contains("on");
-        wrap.classList.toggle("on", turningOn);
-        if (turningOn){
-          wrap.classList.add("flicker");
-          setTimeout(()=> wrap.classList.remove("flicker"), 950);
-        } else {
-          wrap.classList.remove("flicker");
-        }
-        window.dispatchEvent(new CustomEvent("lamp:toggle", {
-          detail: { index: i, on: turningOn }
-        }));
-      });
     }
+    if (!wrap.querySelector(".lamp-hit")) {
+      const hit = document.createElement("div"); hit.className = "lamp-hit";
+      wrap.appendChild(hit);
+    }
+
     const css = wrap.style;
-    css.setProperty("--bx",    config.bx);
-    css.setProperty("--by",    config.by);
-    css.setProperty("--bw",    config.bw);
-    css.setProperty("--bh",    config.bh);
-    css.setProperty("--beamW", config.beamW);
-    css.setProperty("--beamH", config.beamH);
-    css.setProperty("--beamY", config.beamY);
+    css.setProperty("--bx",     config.bx);
+    css.setProperty("--by",     config.by);
+    css.setProperty("--bxpx",   config.bxpx || "0px");
+    css.setProperty("--bypx",   config.bypx || "0px");
+
+    css.setProperty("--bw",     config.bw);
+    css.setProperty("--bh",     config.bh);
+
+    css.setProperty("--beamW",  config.beamW);
+    css.setProperty("--beamH",  config.beamH);
+    css.setProperty("--beamX",  config.beamX || "");
+    css.setProperty("--beamY",  config.beamY);
+
+    /* circle-specific vars */
+    css.setProperty("--beamD",        config.beamD || "");
+    css.setProperty("--beamYOffset",  config.beamYOffset || "0px");
+
+    /* toggle circle mode */
+    wrap.classList.toggle("isLantern", !!config.beamCircle);
   });
+
+  window.__refreshLampLitterRects?.();
 }
+
+
+
 const LANTERN_CFG = {
-  bx:"50%", by:"6%",  bw:"80px", bh:"92px",
-  beamW:"240px", beamH:"300px", beamY:"90px",
+bx: "calc(50% + 55px)",   
+ by: "calc(22% + 200px)",
+  bw:"68px",  // tighter glow (optional)
+  bh:"68px",  // ^
+  beamW:"260px", // a touch wider (optional)
+  beamH:"260px", // a bit shorter (optional)
+  beamY:"20px", // was 140px → lift cone slightly; increase to drop further
+ bw: "64px", bh: "64px",
+
+ beamCircle: true,          // <-- enable circle
+  beamD: "220px",            // diameter of the circle
+  beamYOffset: "-60px",      // nudge up/down to sit inside the lantern
+  hue: "40deg",
+
+ 
+};
+
+const STREETLIGHT_CFG = {
+ bx:"99%",   // was 50% → shift RIGHT
+  by:"50%",   // was 15% → shift DOWN
+  bw:"68px",  // tighter glow (optional)
+  bh:"68px",  // ^
+  beamW:"260px", // a touch wider (optional)
+  beamH:"260px", // a bit shorter (optional)
+  beamY:"128px", // was 140px → lift cone slightly; increase to drop further
   hue:"40deg"
 };
-const STREETLIGHT_CFG = {
-  bx:"66%", by:"-6%", bw:"62px", bh:"62px",
-  beamW:"300px", beamH:"260px", beamY:"68px",
-  hue:"58deg"
+// --- Global lamps ON/OFF state & helpers ---
+window.__lampsOn = false;
+
+function __setLampsOn(on){
+  document.querySelectorAll("#lampsRow .lampWrap")
+    .forEach(w => w.classList.toggle("on", on));
+  window.__lampsOn = on;
+
+  // optional brief start-up flicker when turning ON
+  if (on){
+    document.querySelectorAll("#lampsRow .lampWrap")
+      .forEach(w => {
+        w.classList.add("flicker");
+        setTimeout(()=> w.classList.remove("flicker"), 900);
+      });
+  }
+
+  // broadcast for future effects (chimneys, etc.)
+  window.dispatchEvent(new CustomEvent("lamps:state", { detail:{ on } }));
+}
+
+window.__toggleLamps = function(){
+  __setLampsOn(!window.__lampsOn);
 };
 
 /* ---------- BUILD LAYERS ---------- */
@@ -630,7 +726,7 @@ function buildCrossfade(){
   const tl = gsap.timeline({ paused: true });
 
   // retarget click geometry once we pass into stage 1 visuals
-  tl.add(() => attachLampToggle("#lampsScene", STREETLIGHT_CFG),
+tl.add(() => setLampConfig("#lampsScene", STREETLIGHT_CFG),
          HOLD_START + 1 * segDur + 0.001);
 
   function fadeLamps(t, a, b){
@@ -675,7 +771,7 @@ preload(ALL).then(async () => {
   buildFarParallax();
   buildNearParallax();
   buildLampRow(5);
-  attachLampToggle("#lampsScene", LANTERN_CFG);
+  setLampConfig("#lampsScene", LANTERN_CFG);
 
   // Nudge the litter module to know lamp positions/ground line
   window.__refreshLampGroundLine?.();
