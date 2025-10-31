@@ -406,6 +406,37 @@ const DEFAULT_PHYS = { g:0.90, air:0.014, turb:0.55, lift:0.002, spin:1.00, grou
 })();
 
 /* ---------- HELPERS ---------- */
+/* Map global progress (0..1) → [sceneIdx, sceneLocal(0..1)] */
+function sceneLocalProgress(p){
+  const segs    = XFADE_SEGS;                 // 2
+  const segDur  = XFADE_SEG_DUR;              // computed above
+  const holdLo  = XFADE_HOLD_START;           // 0.12
+  const holdHi  = XFADE_HOLD_END;             // 0.20
+  const segIdx  = sceneFromProgress(p);       // 0,1,2
+
+  // Compute each segment’s [start,end) in the 0..1 timeline:
+  // timeline: [holdLo] [seg0] [seg1] [holdHi]
+  let start, end;
+  if (segIdx === 0){
+    start = 0;                  // from very start (incl. HOLD_START plateau)
+    end   = holdLo + segDur;    // end of first crossfade segment
+  } else if (segIdx === 1){
+    start = holdLo + segDur;
+    end   = holdLo + segDur*2;  // end of second crossfade segment
+  } else {
+    start = holdLo + segDur*2;
+    end   = 1;                  // through HOLD_END to 1
+  }
+
+  // clamp p into [start,end] and normalize → 0..1
+  const t = Math.max(start, Math.min(p, end));
+  const span = Math.max(1e-6, end - start);
+  const local = (t - start) / span;
+  return [segIdx, local];
+}
+
+
+
 function disableCityClicks(){
   const r = document.getElementById("cityClickRouter");
   if (r){ r.style.display = "none"; r.style.pointerEvents = "none"; r.style.cursor = "default"; }
@@ -1000,33 +1031,43 @@ window.__smokeSetEmitters(1, [
     onLeave(){ enableCityClicks(); },
     onLeaveBack(){ enableCityClicks(); },
 
-    onUpdate(self){
-      xfade.progress(self.progress);
+  onUpdate(self){
+  xfade.progress(self.progress);
 
-      // litter spawns tied to scroll distance
-      window.__litterTick ??= { p:0, acc:0, wind:0 };
-      const LT = window.__litterTick;
-      const p  = self.progress;
-      const dp = p - LT.p;
+  // litter spawns tied to scroll distance (unchanged)
+  window.__litterTick ??= { p:0, acc:0, wind:0 };
+  const LT = window.__litterTick;
+  const p  = self.progress;
+  const dp = p - LT.p;
 
-      if (p < XFADE_HOLD_START) LT.acc += 40;
-      LT.acc  += Math.abs(dp) * 1000;
-      LT.wind += (Math.random() - 0.5) * 60;
-      LT.p     = p;
+  if (p < XFADE_HOLD_START) LT.acc += 40;
+  LT.acc  += Math.abs(dp) * 1000;
+  LT.wind += (Math.random() - 0.5) * 60;
+  LT.p     = p;
 
-      const sceneIdx = sceneFromProgress(p);
-      window.__smokeSetScene?.(sceneIdx);                         // ← set which anchors
-  window.__smokeSetWind?.((window.__litterTick?.wind ?? 0)*0.02); // ← gentle wind
+  // SCENE state
+  const [sceneIdx, sProg] = sceneLocalProgress(p);
 
-      while (LT.acc > 85){
-        window.spawnLampLitter?.(sceneIdx, 4 + (Math.random()*4|0));
-        LT.acc -= 85;
-      }
+  // smoke anchors + wind
+  window.__smokeSetScene?.(sceneIdx);
+  window.__smokeSetWind?.((window.__litterTick?.wind ?? 0)*0.02);
 
-      gsap.set("#parallaxNearStack", { x: 0 });
-      gsap.set("#parallaxFarStack",  { x: 0 });
-      
-    },
+  // fliers (your new module)
+  window.__lampFliers?.setScene(sceneIdx);
+  window.__lampFliers?.setProgress(sProg);
+  window.__lampFliers?.update();
+
+  // spawn litter
+  while (LT.acc > 85){
+    window.spawnLampLitter?.(sceneIdx, 4 + (Math.random()*4|0));
+    LT.acc -= 85;
+  }
+
+  // lock parallax x each tick
+  gsap.set("#parallaxNearStack", { x: 0 });
+  gsap.set("#parallaxFarStack",  { x: 0 });
+},
+
     onRefresh(){},
     invalidateOnRefresh: true,
     onRefreshInit(){ xfade.progress(0); }
