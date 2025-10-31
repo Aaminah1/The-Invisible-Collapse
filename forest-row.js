@@ -3,10 +3,10 @@ gsap.registerPlugin(ScrollTrigger);
 gsap.config({ nullTargetWarn: false });
 /* ---------- assets ---------- */
 const SRC = {
-  full: "images/Tree-Full.png",
-  mid1: "images/Tree-Mid1.png",
-  mid2: "images/Tree-Mid2.png",
-  bare: "images/Tree-Bare.png"
+  full: "images/Tree-Full1.png",
+  mid1: "images/Tree-Mid11.png",
+  mid2: "images/Tree-Mid21.png",
+  bare: "images/Tree-Bare1.png"
 };
 // how much higher (in px) to spawn above the canopy band
 const PICKUP_SPAWN_LIFT = {

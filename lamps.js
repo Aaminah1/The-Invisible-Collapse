@@ -2,80 +2,84 @@ gsap.registerPlugin(ScrollTrigger);
 
 /* ---------- ASSETS ---------- */
 const LAMP_SRC = [
-  "images/lampost1.png",  // stage 0 → lantern
-  "images/lampost3.png",  // stage 1 → streetlight
-  "images/lampost5.png"   // stage 2 → later streetlight
+  "images/lampost1.png",     // stage 0 → lantern
+  "images/lampost3.png",     // stage 1 → streetlight
+  "images/lampost4.1.png",   // stage 2 → later streetlight (build-up)
+  "images/lampost4.1.png",   // stage 3 → later streetlight (blackout, same art)
 ];
 
 const GROUND_SRC = [
   "images/ground_stage5.png",
   "images/ground_stage6.png",
-  "images/ground_stage9.png"
+  "images/ground_stage8.png",
+  "images/ground_stage8.png",
 ];
 
 const NEAR_SRC = [
   "images/city1.png",
   "images/city3.png",
-  "images/city5.png"
+  "images/city4.png",
+  "images/city4.png",
 ];
 
 const FAR_SRC = [
   "images/cityfar_1.png",
   "images/cityfar_3.png",
-  "images/cityfar_5.png"
+  "images/cityfar_4.png",
+  "images/cityfar_4.png"
 ];
 
 const NEAR_REF = "images/constructioncity_near.png";
 
-/* ---- Crossfade timing used by both crossfade & scene mapping ---- */
+/* Track whether the user has explicitly chosen a state via click.
+   null = no override (allow scene logic), 'on' | 'off' = respect user choice. */
+window.__lampsUserOverride = null;
+
+/* Route the public toggle through an override setter */
+function __applyUserOverride(nextOn){
+  window.__lampsUserOverride = nextOn ? 'on' : 'off';
+  __setLampsOn(nextOn, { noFlicker:true });
+  // When user clicks, also clear any smoke program override (keeps it simple)
+  window.__smokeSetBoost?.(null);
+}
+window.__toggleLamps = function () {
+  __applyUserOverride(!window.__lampsOn);
+};
+
+/* ---- Crossfade timing ---- */
 const XFADE_HOLD_START = 0.12;
 const XFADE_HOLD_END   = 0.20;
-const XFADE_SEGS       = LAMP_SRC.length - 1; // 2 segments for 3 images
+const XFADE_SEGS       = LAMP_SRC.length - 1; // 4 imgs → 3 segs
 const XFADE_SEG_DUR    = (1 - XFADE_HOLD_START - XFADE_HOLD_END) / XFADE_SEGS;
 
-// cut points where we switch the *spawn* pack (a bit into each crossfade so visuals lead)
-const CUT1 = XFADE_HOLD_START + XFADE_SEG_DUR * 0.58;                 // ~0.317
-const CUT2 = XFADE_HOLD_START + XFADE_SEG_DUR + XFADE_SEG_DUR * 0.58; // ~0.657
+/* IMPORTANT: cut points now EXACTLY match the crossfade segment edges */
+const CUT1 = XFADE_HOLD_START + 1 * XFADE_SEG_DUR;   // end of seg0
+const CUT2 = XFADE_HOLD_START + 2 * XFADE_SEG_DUR;   // end of seg1
+const CUT3 = XFADE_HOLD_START + 3 * XFADE_SEG_DUR;   // end of seg2
+
 function sceneFromProgress(p){
-  return (p < CUT1) ? 0 : (p < CUT2) ? 1 : 2;
+  if (p < CUT1) return 0;  // lantern
+  if (p < CUT2) return 1;  // streetlight
+  if (p < CUT3) return 2;  // late streetlight (build-up)
+  return 3;                // blackout
 }
 
-/* ---- LITTER PACKS (per scene) ---- */
+/* ---- LITTER PACKS ---- */
 const LITTER_PACKS = {
-  0: [
-    "images/litter/paper.png",
-    "images/litter/receipt.png",
-    "images/litter/trash.png",
-    "images/litter/rock.png"
-  ],
+  0: ["images/litter/paper.png","images/litter/receipt.png","images/litter/trash.png","images/litter/rock.png"],
   1: [
-    "images/litter/coffee.png",
-    "images/litter/moderncoffee.png",
-    "images/litter/chippacket.png",
-    "images/litter/tupperware.png",
-    "images/litter/waterbottle.png",
-    "images/litter/plasticpacke.png",
-    "images/litter/colorcan.png",
-    "images/litter/wine.png",
-    "images/litter/mask.png",
-    "images/litter/waterbottle.png",
-    "images/litter/plasticpacke.png",
-    "images/litter/colorcan.png",
-    "images/litter/wine.png",
-    "images/litter/mask.png"
+    "images/litter/coffee.png","images/litter/moderncoffee.png","images/litter/chippacket.png",
+    "images/litter/tupperware.png","images/litter/waterbottle.png","images/litter/plasticpacke.png",
+    "images/litter/colorcan.png","images/litter/wine.png","images/litter/mask.png",
+    "images/litter/waterbottle.png","images/litter/plasticpacke.png","images/litter/colorcan.png",
+    "images/litter/wine.png","images/litter/mask.png"
   ],
-  2: [
-    "images/litter/waterbottle.png",
-    "images/litter/plasticpacke.png",
-    "images/litter/colorcan.png",
-    "images/litter/wine.png",
-    "images/litter/mask.png"
-  ]
+  2: ["images/litter/waterbottle.png","images/litter/plasticpacke.png","images/litter/colorcan.png","images/litter/wine.png","images/litter/mask.png"]
 };
-const LITTER_PACK_DEFAULT = ["images/litter/trash.png", "images/litter/rock.png"];
+const LITTER_PACK_DEFAULT = ["images/litter/plasticpacke.png", "images/litter/rock.png"];
 const LITTER_ALL = [...new Set([...LITTER_PACK_DEFAULT, ...Object.values(LITTER_PACKS).flat()])];
 
-/* ---------- PER-ITEM PHYSICS ---------- */
+/* ---------- PER-ITEM PHYS ---------- */
 const ITEM_PHYS = {
   "paper":        { g:0.40, air:0.025, turb:0.90, lift:0.018, spin:1.20, groundFriction:0.90, rotFriction:0.94, impact:0.55, cursor:1.75 },
   "receipt":      { g:0.42, air:0.026, turb:0.95, lift:0.020, spin:1.15, groundFriction:0.90, rotFriction:0.94, impact:0.55, cursor:1.75 },
@@ -93,7 +97,7 @@ const ITEM_PHYS = {
 };
 const DEFAULT_PHYS = { g:0.90, air:0.014, turb:0.55, lift:0.002, spin:1.00, groundFriction:0.94, rotFriction:0.96, impact:0.70, cursor:1.00 };
 
-/* ================== LITTER CANVAS (no debug boxes) ================== */
+/* ================== LITTER CANVAS ================== */
 (() => {
   const GRAVITY = 0.018, WIND_K = 0.01;
   const FRICTION = 0.94, ROT_FRICTION = 0.96, STOP_EPS = 0.03;
@@ -194,7 +198,7 @@ const DEFAULT_PHYS = { g:0.90, air:0.014, turb:0.55, lift:0.002, spin:1.00, grou
     const key = sprite?.key || "unknown";
     const phys = { ...DEFAULT_PHYS, ...(ITEM_PHYS[key] || {}) };
 
-    const target = rand(SIZE_RANGE[0], SIZE_RANGE[1]);
+    const target = Math.random() * (SIZE_RANGE[1]-SIZE_RANGE[0]) + SIZE_RANGE[0];
     let w = 18, h = 14;
     if (img) {
       const iw = img.naturalWidth  || 32;
@@ -206,8 +210,8 @@ const DEFAULT_PHYS = { g:0.90, air:0.014, turb:0.55, lift:0.002, spin:1.00, grou
 
     parts.push({
       x, y, vx, vy,
-      rot: rand(-Math.PI, Math.PI),
-      spin: rand(-0.015, 0.015) * phys.spin,
+      rot: (Math.random()*Math.PI*2) - Math.PI,
+      spin: (Math.random()-0.5) * 0.03 * phys.spin,
       img, w, h,
       flip: Math.random() < 0.35 ? -1 : 1,
       settled: false,
@@ -215,7 +219,7 @@ const DEFAULT_PHYS = { g:0.90, air:0.014, turb:0.55, lift:0.002, spin:1.00, grou
     });
   }
 
-  // public API: spawn near current lamps (asymmetric + some sky freefalls)
+  // public API
   window.spawnLampLitter = function(sceneIdx = 0, count = 6) {
     if (!(canvas && canvas.width && LAMP_RECTS.length)) return;
 
@@ -244,7 +248,7 @@ const DEFAULT_PHYS = { g:0.90, air:0.014, turb:0.55, lift:0.002, spin:1.00, grou
     }
   };
 
-  // cheap value-noise for wind jitter
+  // jitter
   let __turbTick = 1.0;
   function turb(x, y) {
     return Math.sin((x + __turbTick) * 0.007) * 0.7 +
@@ -314,17 +318,16 @@ const DEFAULT_PHYS = { g:0.90, air:0.014, turb:0.55, lift:0.002, spin:1.00, grou
     ctx.clearRect(0, 0, W, H);
 
     __turbTick += 1.0;
-    const wind = 0;
 
     for (let i = parts.length - 1; i >= 0; i--) {
       const p = parts[i];
       const phys = p.phys || DEFAULT_PHYS;
 
       if (!p.settled) {
-        p.vx  += wind * WIND_K;
-        p.vy  += GRAVITY * phys.g;
+        // gravity/air
         p.vx *= (1 - phys.air);
         p.vy *= (1 - phys.air * 0.60);
+        p.vy += 0.018 * phys.g;
         p.vy -= Math.abs(p.vx) * phys.lift;
 
         const jitterX = turb(p.x, p.y) * 0.02 * phys.turb;
@@ -406,36 +409,21 @@ const DEFAULT_PHYS = { g:0.90, air:0.014, turb:0.55, lift:0.002, spin:1.00, grou
 })();
 
 /* ---------- HELPERS ---------- */
-/* Map global progress (0..1) → [sceneIdx, sceneLocal(0..1)] */
 function sceneLocalProgress(p){
-  const segs    = XFADE_SEGS;                 // 2
-  const segDur  = XFADE_SEG_DUR;              // computed above
-  const holdLo  = XFADE_HOLD_START;           // 0.12
-  const holdHi  = XFADE_HOLD_END;             // 0.20
-  const segIdx  = sceneFromProgress(p);       // 0,1,2
+  const segDur  = XFADE_SEG_DUR;
+  const holdLo  = XFADE_HOLD_START;
+  const segIdx  = sceneFromProgress(p);
 
-  // Compute each segment’s [start,end) in the 0..1 timeline:
-  // timeline: [holdLo] [seg0] [seg1] [holdHi]
   let start, end;
-  if (segIdx === 0){
-    start = 0;                  // from very start (incl. HOLD_START plateau)
-    end   = holdLo + segDur;    // end of first crossfade segment
-  } else if (segIdx === 1){
-    start = holdLo + segDur;
-    end   = holdLo + segDur*2;  // end of second crossfade segment
-  } else {
-    start = holdLo + segDur*2;
-    end   = 1;                  // through HOLD_END to 1
-  }
+  if (segIdx === 0){ start = 0; end = holdLo + segDur; }
+  else if (segIdx === 1){ start = holdLo + segDur; end = holdLo + segDur*2; }
+  else if (segIdx === 2){ start = holdLo + segDur*2; end = CUT3; } // build-up
+  else { start = CUT3; end = 1; }                                  // blackout
 
-  // clamp p into [start,end] and normalize → 0..1
   const t = Math.max(start, Math.min(p, end));
   const span = Math.max(1e-6, end - start);
-  const local = (t - start) / span;
-  return [segIdx, local];
+  return [segIdx, (t - start) / span];
 }
-
-
 
 function disableCityClicks(){
   const r = document.getElementById("cityClickRouter");
@@ -512,7 +500,10 @@ function buildStack(containerId, classBase, srcs){
 }
 
 /* ---------- Per-scene lamp configs ---------- */
+let __CURRENT_LAMP_CFG = null; // track for intensity math
+
 function setLampConfig(containerSel, config){
+  __CURRENT_LAMP_CFG = config;
   const wraps = document.querySelectorAll(containerSel + " .lampWrap");
   wraps.forEach((wrap) => {
     if (!wrap.querySelector(".lamp-glow")) {
@@ -523,6 +514,8 @@ function setLampConfig(containerSel, config){
     }
     if (!wrap.querySelector(".lamp-hit")) {
       const hit = document.createElement("div"); hit.className = "lamp-hit";
+      // make sure clicks always reach the lamp
+      hit.style.zIndex = "5";
       wrap.appendChild(hit);
     }
 
@@ -536,12 +529,10 @@ function setLampConfig(containerSel, config){
     css.setProperty("--beamH", config.beamH);
     css.setProperty("--beamY", config.beamY);
 
-    /* new: oval controls + hue */
     css.setProperty("--gScaleX", config.gScaleX || "1");
     css.setProperty("--gScaleY", config.gScaleY || "1");
     css.setProperty("--hue",     config.hue || "40deg");
 
-    /* circle vs street styles */
     wrap.classList.toggle("isLantern", !!config.beamCircle);
     wrap.classList.toggle("isStreet",  !config.beamCircle);
   });
@@ -549,6 +540,35 @@ function setLampConfig(containerSel, config){
   window.__refreshLampLitterRects?.();
 }
 
+/* Visual intensity (0..1), multiplies current config’s on-levels */
+function __setLampVisualIntensity(t){
+  const cfg = __CURRENT_LAMP_CFG || {};
+  const glowMax = parseFloat(cfg.glowOn ?? "1") || 1;
+  const beamMax = parseFloat(cfg.beamOn ?? "1") || 1;
+  const glowTarget = Math.max(0, Math.min(1, glowMax * t));
+  const beamTarget = Math.max(0, Math.min(1, beamMax * t));
+  document.querySelectorAll("#lampsRow .lampWrap").forEach(w=>{
+    const glow = w.querySelector(".lamp-glow");
+    const beam = w.querySelector(".lamp-beam");
+    if (glow) glow.style.opacity = String(glowTarget);
+    if (beam) beam.style.opacity = String(beamTarget);
+  });
+}
+
+/* ---------- Unified lamp intensity driving sprite AND overlays ---------- */
+function __applyLampIntensity(t){
+  const clamped = Math.max(0, Math.min(1, t));
+  __setLampVisualIntensity(clamped);  // overlays
+  // darken/brighten the lamp sprites themselves
+  document.querySelectorAll("#lampsRow .lamp").forEach(img=>{
+    // Keep the drop-shadow AND dim/brighten the sprite.
+    // Floor brightness high enough to avoid “black” lamps when OFF.
+    const b = 0.90 + 0.60 * clamped; // OFF≈0.55, ON≈1.15 (nice pop)
+    img.style.filter =
+      `drop-shadow(0 6px 16px rgba(0,0,0,.35)) brightness(${b.toFixed(3)}) contrast(1.02)`;
+  });
+  window.__lampIntensity = clamped;   // for debugging if you want
+}
 
 /* Lantern (circle) */
 const LANTERN_CFG = {
@@ -565,35 +585,52 @@ const LANTERN_CFG = {
   hitW: "110px", hitH: "65%", hitTop: "200px"
 };
 
-/* Streetlight (cone) */
+/* Streetlight (cone) — scene 2 */
 const STREETLIGHT_CFG = {
   beamCircle: false,
-  /* bulb center */
-  bx:  "calc(50% + 60px)",   // was +6px → nudge RIGHT
-  by:  "calc(8% + 180px)",   // was +148px → push DOWN
-
-  /* inner glow size */
-  bw:  "60px",
-  bh:  "60px",
-  /* oval shaping */
-  gScaleX: "1.35",       // wider
-  gScaleY: "0.75",       // flatter
-  /* cone footprint */
-  beamW: "330px",            // a touch wider
-  beamH: "400px",            // a bit longer
-  beamY: "30px",             // distance from bulb → cone apex (slightly shorter after moving bulb down)
-
-  /* color & intensity */
-  hue:    "200deg",          // cooler blue-white
-  glowOn: "1.00",            // max (CSS opacity caps at 1)
+  bx:  "calc(50% + 60px)",
+  by:  "calc(8% + 180px)",
+  bw:  "48px",
+  bh:  "44px",
+  gScaleX: "1.15",
+  gScaleY: "0.66",
+  beamW: "330px",
+  beamH: "400px",
+  beamY: "30px",
+  hue:    "200deg",
+  glowOn: "1.00",
   beamOn: "0.98",
-
-  /* click zone (unchanged) */
-  hitW: "110px",
-  hitH: "65%",
-  hitTop: "200px"
+  hitW: "110px", hitH: "65%", hitTop: "200px"
 };
 
+/* Late Streetlight (harsher, colder) — scene 3 */
+const LATE_STREET_CFG = {
+  ...STREETLIGHT_CFG,
+  gScaleX: "1.60",
+  gScaleY: "0.68",
+  beamW: "360px",
+  beamH: "460px",
+  beamY: "18px",
+  hue: "215deg",
+  glowOn: "0.88",
+  beamOn: "0.96"
+};
+
+/* degraders (banding/haze/jitter) */
+function __setLampDegrade({ bands=0, haze=0, jitter=0 }){
+  document.querySelectorAll("#lampsRow .lampWrap").forEach(w=>{
+    w.style.setProperty("--beamBands", String(Math.max(0, Math.min(1, bands))));
+    w.style.setProperty("--beamHaze",  String(Math.max(0, Math.min(1, haze))));
+    const glow = w.querySelector(".lamp-glow");
+    const beam = w.querySelector(".lamp-beam");
+    if (glow) glow.style.filter = `brightness(${(1 + jitter*0.08).toFixed(3)})`;
+    if (beam) beam.style.filter = `brightness(${(1 + jitter*0.10).toFixed(3)})`;
+  });
+}
+function __setLampVisualIntensityIfOn(base){
+  const t = window.__lampsOn ? Math.max(0, Math.min(1, base)) : 0;
+  __applyLampIntensity(t);
+}
 
 /* ---------- Lamps ON/OFF ---------- */
 window.__lampsOn = false;
@@ -605,26 +642,26 @@ function __setLampsOn(on, opts = {}) {
     .forEach(w => w.classList.toggle("on", on));
   window.__lampsOn = on;
 
-  if (on && !noFlicker) {          // only flicker when we *actively* turn on
-    document.querySelectorAll("#lampsRow .lampWrap")
-      .forEach(w => {
-        w.classList.add("flicker");
-        setTimeout(() => w.classList.remove("flicker"), 900);
-      });
+  // Immediately reflect click in visuals + sprite brightness
+  __applyLampIntensity(on ? 1 : 0);
+
+  if (on && !noFlicker) {
+    document.querySelectorAll("#lampsRow .lampWrap").forEach(w => {
+      w.classList.add("flicker");
+      setTimeout(() => w.classList.remove("flicker"), 900);
+    });
   }
 
-  // (Move the listener OUTSIDE to avoid re-adding it each call)
+  // keep smoke perfectly in lockstep with lamp state
+  window.__smokeEnable?.(on);
+
+  // broadcast state
   window.dispatchEvent(new CustomEvent("lamps:state", { detail: { on } }));
 }
-// one-time listener (was inside the function before — that caused duplicates)
 window.addEventListener("lamps:state", (e) => {
   const on = !!e.detail?.on;
-  window.__smokeEnable?.(on);  // your smoke still follows lamp state
+  window.__smokeEnable?.(on); // safe if duplicate
 });
-
-window.__toggleLamps = function(){ __setLampsOn(!window.__lampsOn); };
-
-
 
 /* ---------- BUILD LAYERS ---------- */
 function buildGroundStack(){ buildStack("lampsGroundStack", "ground", GROUND_SRC); }
@@ -650,29 +687,37 @@ function buildLampRow(n = 5){
   }
 }
 
-/* ---------- CROSSFADES & CONFIG SWITCHES ---------- */
+/* ---------- CROSSFADES ---------- */
 function buildCrossfade(){
   const HOLD_START = XFADE_HOLD_START, HOLD_END = XFADE_HOLD_END;
   const segs = LAMP_SRC.length - 1;
   const segDur = (1 - HOLD_START - HOLD_END) / segs;
   const tl = gsap.timeline({ paused: true });
 
-  // on scrub TO stage 1 → swap to streetlight & force OFF
-  // on scrub TO stage 1 → swap to streetlight & KEEP current lamp state
-const tToStreet = HOLD_START + 1 * segDur + 0.001;
-tl.add(() => {
-  const keep = window.__lampsOn;                // remember current ON/OFF
-  setLampConfig("#lampsScene", STREETLIGHT_CFG);
-  __setLampsOn(keep, { noFlicker: true });      // restore without flicker
-}, tToStreet);
+  // Scene switches aligned to CUTs
+  const tToStreet = CUT1 + 0.0001;
+  const tToLate   = CUT2 + 0.0001;
 
-// on scrub BACK to the very start → restore lantern & KEEP current lamp state
-tl.add(() => {
-  const keep = window.__lampsOn;
-  setLampConfig("#lampsScene", LANTERN_CFG);
-  __setLampsOn(keep, { noFlicker: true });
-}, 0);
+  // Init with lantern
+  tl.add(() => {
+    const keep = window.__lampsOn;
+    setLampConfig("#lampsScene", LANTERN_CFG);
+    __setLampsOn(keep, { noFlicker: true });
+  }, 0);
 
+  // Scene 1 → streetlight
+  tl.add(() => {
+    const keep = window.__lampsOn;
+    setLampConfig("#lampsScene", STREETLIGHT_CFG);
+    __setLampsOn(keep, { noFlicker: true });
+  }, tToStreet);
+
+  // Scene 2 → late streetlight (harsher)
+  tl.add(() => {
+    const keep = window.__lampsOn;
+    setLampConfig("#lampsScene", LATE_STREET_CFG);
+    __setLampsOn(keep, { noFlicker: true });
+  }, tToLate);
 
   function fadeLamps(t, a, b){
     document.querySelectorAll("#lampsRow .lampWrap").forEach(w => {
@@ -694,7 +739,7 @@ tl.add(() => {
       .to(B, {opacity:1, duration:segDur, ease:"none"}, t);
   }
   for (let i = 0; i < segs; i++){
-    const t = HOLD_START + i * segDur;
+    const t = XFADE_HOLD_START + i * segDur;
     fadeLamps(t, i, i + 1);
     fadeContainer(t, "#lampsGroundStack",  "ground", i, i + 1);
     fadeContainer(t, "#parallaxNearStack", "near",   i, i + 1);
@@ -702,21 +747,16 @@ tl.add(() => {
   }
   return tl;
 }
+
 /* ================== CHIMNEY + FACTORY SMOKE ================== */
-/* ================== CHIMNEY + FACTORY SMOKE (sprite-based, pooled) ================== */
 (() => {
   const cvs = document.getElementById('smokeCanvas');
   if (!cvs) return;
   const ctx = cvs.getContext('2d', { alpha:true });
 
-  /* ------- ASSETS (put your PNGs in /images/smoke/ ) ------- */
   const DRIFT_SRCS = [
-    "images/smoke/drift_puff_01.png",
-    "images/smoke/drift_puff_02.png",
-    "images/smoke/drift_puff_03.png",
-    "images/smoke/drift_puff_04.png",
-    "images/smoke/drift_puff_05.png",
-    "images/smoke/drift_puff_06.png"
+    "images/smoke/drift_puff_01.png","images/smoke/drift_puff_02.png","images/smoke/drift_puff_03.png",
+    "images/smoke/drift_puff_04.png","images/smoke/drift_puff_05.png","images/smoke/drift_puff_06.png"
   ];
   const puffImgs = [];
   let assetsReady = false;
@@ -730,95 +770,36 @@ tl.add(() => {
   }
   preloadPuffs();
 
-  /* ------- PERF / TUNING ------- */
-  const MAX_PARTS       = 360;  // cap particles
-  const TARGET_FPS      = 30;   // logic tick
-  const BASE_SPAWN      = 1.0;  // global density multiplier
+  /* Tuning */
+  const MAX_PARTS       = 360;
+  const TARGET_FPS      = 30;
+  const BASE_SPAWN      = 1.0;
   const DRAG            = 0.985;
-  const CEILING_FRAC    = 0.18; // fraction of H where smoke “hits the ceiling”
-  const CEILING_SPREAD  = 0.020; // extra lateral spread when above ceiling
-  const LIFT_BASE       = -0.050; // baseline rise (negative y velocity)
-  const LIFT_JITTER     = -0.030; // random extra rise
-  const WIND_K          = 0.06;  // wind effect scaler
-  const FADE_PER_SEC    = 0.30;  // life decay per second (0..1)
-const NEAR_SCALE = [0.05, 0.20];  // near chimneys (houses)
-const FAR_SCALE  = [0.03, 0.09];  // far factories / back houses
-  const NEAR_ALPHA      = [0.55, 0.85];
-  const FAR_ALPHA       = [0.45, 0.72];
+  const CEILING_FRAC    = 0.18;
+  const LIFT_BASE       = -0.050;
+  const WIND_K          = 0.06;
 
-  // “Top smog” blanket targets per scene (fills down from the top)
-  const SMOG = {
-    0: { a: 0.15, h: 0.28 },
-    1: { a: 0.25, h: 0.42 },
-    2: { a: 0.38, h: 0.58 },
-  };
+  const SMOG = { 0:{a:0.15,h:0.28}, 1:{a:0.25,h:0.42}, 2:{a:0.38,h:0.58} };
   let smogAlpha  = 0;
   let smogHeight = 0;
 
-  // Scene multipliers (density)
-  const SCENE_MULT = { 0: 0.65, 1: 1.00, 2: 1.40 };
+  const SCENE_MULT = { 0:0.65, 1:1.00, 2:1.40 };
 
-  // Lamp + scene state (fed externally)
   let lampsOn = false;
   let currentScene = 0;
-  let globalWind = 0; // gentle ± value set from your litter wind
+  let globalWind = 0;
 
-  // Resize
+  // main override so Scene 4 can force emission even if lamps are off
+  let override = null;
+  window.__smokeSetBoost = (o)=>{ override = o || null; };
+
   function size() {
     const w = cvs.clientWidth | 0;
     const h = cvs.clientHeight | 0;
-    if (cvs.width !== w || cvs.height !== h) {
-      cvs.width = w; cvs.height = h;
-    }
+    if (cvs.width !== w || cvs.height !== h) { cvs.width = w; cvs.height = h; }
   }
   size(); addEventListener('resize', size);
 
-  /* ------- Emitters (percent positions, easy to line up with art) ------- */
-  // depth: 'near' or 'far'; rate ≈ particles/sec at SCENE_MULT=1 when lamps ON
-  const EMITTERS = {
-    0: [ // Lantern scene — 3 house chimneys, lighter
-  { xPct: 5,  yPct: 50, rate: 14, depth: 'far' },
-  { xPct: 73, yPct: 68, rate: 16, depth: 'near' },
-  { xPct: 92, yPct: 51, rate: 14, depth: 'far' },
-    ],
-
-
-    1: [ // Streetlight scene — more chimneys + distant factories
-     // --- NEAR (green) — house roofs ---
-  { xPct: 16, yPct: 48, rate: 18, depth: 'near' }, // left house
-  { xPct: 66, yPct: 49, rate: 20, depth: 'near' }, // middle house
-  { xPct: 41, yPct: 50, rate: 18, depth: 'near' }, // right house
-{ xPct: 86, yPct: 50, rate: 10, depth: 'near' }, // right house
-
-  // --- FAR (orange) — skyline stacks ---
-  { xPct: 22, yPct: 17, rate: 26, depth: 'far' },  // far-left tall stack
-  { xPct: 85, yPct: 16, rate: 26, depth: 'far' },  // far-right tall stack
-  { xPct: 56, yPct: 32, rate: 20, depth: 'far' },  // far-right tall stack
-    { xPct: 51, yPct: 32, rate: 20, depth: 'far' },  // far-right tall stack
-
-    ],
-
-
-    2: [ // Later streetlight — densest, more factories
-      // --- NEAR (green) — house roofs ---
-  { xPct: 16, yPct: 48, rate: 18, depth: 'near' }, // left house
-  { xPct: 66, yPct: 49, rate: 20, depth: 'near' }, // middle house
-  { xPct: 41, yPct: 50, rate: 18, depth: 'near' }, // right house
-{ xPct: 86, yPct: 50, rate: 10, depth: 'near' }, // right house
-
-  // --- FAR (orange) — skyline stacks ---
-  { xPct: 22, yPct: 17, rate: 26, depth: 'far' },  // far-left tall stack
-  { xPct: 85, yPct: 16, rate: 26, depth: 'far' },  // far-right tall stack
-  { xPct: 56, yPct: 32, rate: 20, depth: 'far' },  // far-right tall stack
-    { xPct: 51, yPct: 32, rate: 20, depth: 'far' },  // far-right tall stack
-
-    ],
-  };
-
-  // Expose a tiny API so you can tweak anchors live if needed
-  window.__smokeSetEmitters = (sceneIdx, list) => { EMITTERS[sceneIdx|0] = list || []; };
-
-  /* ------- Pool & Parts ------- */
   const parts = [];
   const pool  = [];
   function getPart(){ return pool.pop() || {}; }
@@ -827,61 +808,51 @@ const FAR_SCALE  = [0.03, 0.09];  // far factories / back houses
   function rand(a, b){ return a + Math.random() * (b - a); }
   function pick(arr){ return arr[(Math.random() * arr.length) | 0]; }
 
+  addEventListener('lamps:state', (e) => { lampsOn = !!e.detail?.on; });
+  function setScene(idx){ currentScene = (idx|0); }
+  window.__setSmokeScene = setScene;
+  window.__smokeSetScene = setScene;
+  window.__smokeSetWind  = (w) => { globalWind = +w || 0; };
+
+  window.__smokeEnable = (on) => {
+    if (!on) { for (let i=parts.length-1;i>=0;i--) freePart(parts.pop()); }
+    lampsOn = !!on;
+  };
+
   function spawn(ex, ey, near=true) {
     if (!assetsReady || !puffImgs.length) return;
     const p = getPart();
     p.x = ex + rand(-6, 6);
     p.y = ey + rand(-2, 2);
     p.vx = rand(-0.12, 0.12);
-    p.vy = LIFT_BASE + rand(LIFT_JITTER * 0.5, LIFT_JITTER); // rising up (negative)
+    p.vy = -0.050 + rand(-0.015, -0.030);
     p.rot = rand(0, Math.PI * 2);
     p.img = pick(puffImgs);
     p.depth = near ? 'near' : 'far';
-    p.s = near ? rand(NEAR_SCALE[0], NEAR_SCALE[1]) : rand(FAR_SCALE[0], FAR_SCALE[1]);
-    p.aBase = near ? rand(NEAR_ALPHA[0], NEAR_ALPHA[1]) : rand(FAR_ALPHA[0], FAR_ALPHA[1]);
-    p.life = 1.0; // 1 → 0
+    p.s = near ? rand(0.05, 0.20) : rand(0.03, 0.09);
+    p.aBase = near ? rand(0.55, 0.85) : rand(0.45, 0.72);
+    p.life = 1.0;
     parts.push(p);
     if (parts.length > MAX_PARTS) freePart(parts.shift());
   }
-
-  /* ------- State wiring from your app ------- */
-  addEventListener('lamps:state', (e) => { lampsOn = !!e.detail?.on; });
-
-  // Accept both names (you used both in your code)
-  function setScene(idx){ currentScene = (idx|0); }
-  window.__setSmokeScene = setScene;
-  window.__smokeSetScene = setScene;
-
-  window.__smokeSetWind = (w) => { globalWind = +w || 0; };
-
-  window.__smokeEnable = (on) => {
-    // If you ever want to hard stop & clear immediately:
-    if (!on) { for (let i=parts.length-1;i>=0;i--) freePart(parts.pop()); }
-    lampsOn = !!on;
-  };
-
-  /* ------- Main loop (throttled logic) ------- */
-  let last = performance.now(), acc = 0;
-  function raf(now){
-    const dt = now - last; last = now;
-    acc += dt;
-    const step = 1000 / TARGET_FPS;
-    while (acc >= step) { update(step/1000); acc -= step; }
-    render();
-    requestAnimationFrame(raf);
-  }
-  requestAnimationFrame(raf);
 
   function update(dt) {
     size();
     const W = cvs.width, H = cvs.height;
     const ceilY = CEILING_FRAC * H;
 
-    // Emit
-    if (lampsOn) {
-      const emitters = EMITTERS[currentScene] || [];
-      const dens = SCENE_MULT[currentScene] ?? 1;
-      const k = BASE_SPAWN * dens * dt; // scalar
+    // allow override.force to keep emitting even if lamps are off
+    if (lampsOn || (override && override.force)) {
+      const emitters = window.__SMOKE_EMITTERS?.[currentScene] || [];
+      let densMul = SCENE_MULT[currentScene] ?? 1;
+      let tgt = SMOG[currentScene] || {a:0.25,h:0.42};
+
+      if (override){
+        densMul = override.mult   ?? densMul;
+        tgt = { a: override.alpha ?? tgt.a, h: override.height ?? tgt.h };
+      }
+
+      const k = BASE_SPAWN * densMul * dt;
 
       for (let i=0;i<emitters.length;i++){
         const e = emitters[i];
@@ -889,55 +860,44 @@ const FAR_SCALE  = [0.03, 0.09];  // far factories / back houses
         const ey = (e.yPct/100) * H;
         const near = e.depth !== 'far';
 
-        // Poisson-ish spawn count
         e._carry = (e._carry || 0) + e.rate * k;
         const n = e._carry | 0;
         e._carry -= n;
         for (let j=0;j<n;j++) spawn(ex, ey, near);
       }
+
+      smogAlpha  += (tgt.a - smogAlpha) * 0.05;
+      smogHeight += (tgt.h - smogHeight) * 0.045;
+    } else {
+      smogAlpha  += (0 - smogAlpha) * 0.06;
+      smogHeight += (0 - smogHeight) * 0.06;
     }
 
-    // Physics
     for (let i=parts.length-1;i>=0;i--){
       const p = parts[i];
-
-      // wind + rise
       p.vx += globalWind * WIND_K * (p.depth === 'near' ? 1.0 : 0.65);
-      p.vy += -0.012; // constant tug upwards
+      p.vy += LIFT_BASE;
 
-      // ceiling behavior → flatten outward
       if (p.y < ceilY) {
-        p.vx += rand(-CEILING_SPREAD, CEILING_SPREAD);
+        p.vx += Math.random()*0.04 - 0.02;
         p.vy = Math.min(p.vy, -0.02);
       }
 
-      // decay & motion
       p.vx *= DRAG;
       p.vy *= DRAG;
       p.x  += p.vx * (dt * 60);
       p.y  += p.vy * (dt * 60);
       p.rot += 0.0009 * (dt * 1000);
 
-      // fade out
-      p.life -= FADE_PER_SEC * dt;
-      if (p.life <= 0 || p.y < -120) {
-        freePart(parts.splice(i,1)[0]);
-      }
+      p.life -= 0.30 * dt;
+      if (p.life <= 0 || p.y < -120) { freePart(parts.splice(i,1)[0]); }
     }
-
-    // Smog blanket easing (only while lampsOn)
-    const tgt = SMOG[currentScene] || SMOG[1];
-    const mul = lampsOn ? 1 : 0;
-    smogAlpha  += ((tgt.a * mul) - smogAlpha) * 0.05;
-    smogHeight += ((tgt.h * mul) - smogHeight) * 0.045;
   }
 
   function render() {
     const W = cvs.width, H = cvs.height;
     ctx.clearRect(0,0,W,H);
 
-    // You can sort by depth to draw far first (soft layering)
-    // Simple pass: draw all (they have different alpha/scale anyway)
     for (let i=0;i<parts.length;i++){
       const p = parts[i];
       const img = p.img; if (!img) continue;
@@ -950,7 +910,6 @@ const FAR_SCALE  = [0.03, 0.09];  // far factories / back houses
       ctx.restore();
     }
 
-    // Top smog
     if (smogAlpha > 0.002 && smogHeight > 0.001) {
       const hpx = smogHeight * H;
       const g = ctx.createLinearGradient(0,0,0,hpx);
@@ -961,8 +920,33 @@ const FAR_SCALE  = [0.03, 0.09];  // far factories / back houses
       ctx.fillRect(0,0,W,hpx);
     }
   }
+
+  let last = performance.now(), acc = 0;
+  function raf(now){
+    const dt = now - last; last = now;
+    acc += dt;
+    const step = 1000 / 30;
+    while (acc >= step) { update(step/1000); acc -= step; }
+    render();
+    requestAnimationFrame(raf);
+  }
+  requestAnimationFrame(raf);
+
+  // store emitters externally so we can set them before init (simple)
+  window.__SMOKE_EMITTERS = window.__SMOKE_EMITTERS || { 0:[],1:[],2:[] };
 })();
 
+/* ---------- BLACKOUT OVERLAY ---------- */
+(function ensureBlackout(){
+  if (document.getElementById("blackoutOverlay")) return;
+  const d = document.createElement("div");
+  d.id = "blackoutOverlay";
+  Object.assign(d.style, {
+    position:"fixed", inset:"0", background:"#000",
+    opacity:"0", pointerEvents:"none", zIndex:"9999", transition:"opacity 0.18s linear"
+  });
+  document.body.appendChild(d);
+})();
 
 /* ---------- INIT ---------- */
 const ALL = [
@@ -978,39 +962,42 @@ preload(ALL).then(async () => {
   buildNearParallax();
   buildLampRow(5);
 
-  // Chimney anchors for SCENE 0 (lantern scene)
-window.__smokeSetEmitters(0, [
-  // LEFT roof (back row)
-  { xPct: 5,  yPct: 50, rate: 14, depth: 'far' },
+  // Emitters (scenes 0–2)
+  window.__SMOKE_EMITTERS[0] = [
+    { xPct: 5,  yPct: 50, rate: 14, depth: 'far' },
+    { xPct: 73, yPct: 68, rate: 16, depth: 'near' },
+    { xPct: 92, yPct: 51, rate: 14, depth: 'far' },
+  ];
+  window.__SMOKE_EMITTERS[1] = [
+    { xPct: 16, yPct: 48, rate: 18, depth: 'near' },
+    { xPct: 66, yPct: 49, rate: 20, depth: 'near' },
+    { xPct: 41, yPct: 50, rate: 18, depth: 'near' },
+    { xPct: 86, yPct: 50, rate: 10, depth: 'near' },
+    { xPct: 22, yPct: 17, rate: 26, depth: 'far' },
+    { xPct: 85, yPct: 16, rate: 26, depth: 'far' },
+    { xPct: 56, yPct: 32, rate: 20, depth: 'far' },
+    { xPct: 51, yPct: 32, rate: 20, depth: 'far' },
+  ];
+  window.__SMOKE_EMITTERS[2] = [
+    { xPct: 16, yPct: 48, rate: 30, depth: 'near' },
+    { xPct: 66, yPct: 49, rate: 28, depth: 'near' },
+    { xPct: 41, yPct: 50, rate: 24, depth: 'near' },
+    { xPct: 86, yPct: 50, rate: 30, depth: 'near' },
+    { xPct: 22, yPct: 17, rate: 60, depth: 'far' },
+    { xPct: 85, yPct: 16, rate: 30, depth: 'far' },
+    { xPct: 56, yPct: 32, rate: 40, depth: 'far' },
+    { xPct: 51, yPct: 32, rate: 30, depth: 'far' },
+    { xPct: 60, yPct: 20, rate: 30, depth: 'far' },
+    { xPct: 70, yPct: 12, rate: 30, depth: 'far' },
+    { xPct: 80, yPct: 22, rate: 30, depth: 'far' },
+    { xPct: 65, yPct: 27, rate: 30, depth: 'far' },
+    { xPct: 77, yPct: 18, rate: 30, depth: 'far' },
+    { xPct: 48, yPct: 10, rate: 30, depth: 'far' },
+  ];
 
-  // SMALL house between lamp 4 & 5 (front/near)
-  { xPct: 73, yPct: 68, rate: 16, depth: 'near' },
-
-  // RIGHT roof (back row)
-  { xPct: 92, yPct: 51, rate: 14, depth: 'far' },
-]);
-
-/* -------------------------------
-   Scene 1 emitters (city streetlights)
--------------------------------- */
-window.__smokeSetEmitters(1, [
-    // --- NEAR (green) — house roofs ---
-  { xPct: 16, yPct: 48, rate: 18, depth: 'near' }, // left house
-  { xPct: 66, yPct: 49, rate: 20, depth: 'near' }, // middle house
-  { xPct: 41, yPct: 50, rate: 18, depth: 'near' }, // right house
-{ xPct: 86, yPct: 50, rate: 10, depth: 'near' }, // right house
-
-  // --- FAR (orange) — skyline stacks ---
-  { xPct: 22, yPct: 17, rate: 26, depth: 'far' },  // far-left tall stack
-  { xPct: 85, yPct: 16, rate: 26, depth: 'far' },  // far-right tall stack
-  { xPct: 56, yPct: 32, rate: 20, depth: 'far' },  // far-right tall stack
-    { xPct: 51, yPct: 32, rate: 20, depth: 'far' },  // far-right tall stack
-
-]);
-
-  /* start in lantern style, lights OFF */
   setLampConfig("#lampsScene", LANTERN_CFG);
   __setLampsOn(false);
+  __applyLampIntensity(0); // start dark
 
   window.__refreshLampGroundLine?.();
   window.__refreshLampLitterRects?.();
@@ -1031,42 +1018,117 @@ window.__smokeSetEmitters(1, [
     onLeave(){ enableCityClicks(); },
     onLeaveBack(){ enableCityClicks(); },
 
-  onUpdate(self){
-  xfade.progress(self.progress);
+    onUpdate(self){
+      xfade.progress(self.progress);
 
-  // litter spawns tied to scroll distance (unchanged)
-  window.__litterTick ??= { p:0, acc:0, wind:0 };
-  const LT = window.__litterTick;
-  const p  = self.progress;
-  const dp = p - LT.p;
+      window.__litterTick ??= { p:0, acc:0, wind:0, spawnMult:1 };
+      const LT = window.__litterTick;
+      const p  = self.progress;
+      const dp = p - LT.p;
 
-  if (p < XFADE_HOLD_START) LT.acc += 40;
-  LT.acc  += Math.abs(dp) * 1000;
-  LT.wind += (Math.random() - 0.5) * 60;
-  LT.p     = p;
+      if (p < XFADE_HOLD_START) LT.acc += 40;
+      LT.acc  += Math.abs(dp) * 1000;
+      LT.wind += (Math.random() - 0.5) * 60;
+      LT.p     = p;
 
-  // SCENE state
-  const [sceneIdx, sProg] = sceneLocalProgress(p);
+      const [sceneIdx, sProg] = sceneLocalProgress(p);
 
-  // smoke anchors + wind
-  window.__smokeSetScene?.(sceneIdx);
-  window.__smokeSetWind?.((window.__litterTick?.wind ?? 0)*0.02);
+      // keep using art scene 2 for 3/4 so stacks “exist”
+      const artScene = Math.min(sceneIdx, 2);
+      window.__smokeSetScene?.(artScene);
+      window.__smokeSetWind?.((LT.wind ?? 0)*0.02);
 
-  // fliers (your new module)
-  window.__lampFliers?.setScene(sceneIdx);
-  window.__lampFliers?.setProgress(sProg);
-  window.__lampFliers?.update();
+      // Lamps ON from scene 1 onward unless user has clicked a choice
+      if (sceneIdx >= 1 && window.__lampsUserOverride == null) {
+        if (!window.__lampsOn) __setLampsOn(true, { noFlicker:true });
+      }
+      // When fully back in scene 0, turn OFF unless user overrode
+      if (sceneIdx === 0 && window.__lampsUserOverride == null) {
+        if (window.__lampsOn) __setLampsOn(false, { noFlicker:true });
+      }
 
-  // spawn litter
-  while (LT.acc > 85){
-    window.spawnLampLitter?.(sceneIdx, 4 + (Math.random()*4|0));
-    LT.acc -= 85;
-  }
+      const blackEl = document.getElementById("blackoutOverlay");
 
-  // lock parallax x each tick
-  gsap.set("#parallaxNearStack", { x: 0 });
-  gsap.set("#parallaxFarStack",  { x: 0 });
-},
+      // Degradation & intensity program
+      if (sceneIdx === 1){
+        __setLampVisualIntensityIfOn(1.0);
+        __setLampDegrade({ bands: 0.05 * sProg, haze: 0.04 * sProg, jitter: 0.02 });
+        window.__smokeSetBoost?.(null);
+        LT.spawnMult = 1.0;
+        if (blackEl) blackEl.style.opacity = "0";
+      }
+      else if (sceneIdx === 2){
+        __setLampVisualIntensityIfOn(1.0);
+        __setLampDegrade({
+          bands: 0.18 + 0.35 * sProg,
+          haze:  0.12 + 0.30 * sProg,
+          jitter: 0.06 + 0.10 * sProg
+        });
+        window.__smokeSetBoost?.({
+          mult: 1.0 + 1.8 * sProg,
+          alpha: 0.25 + 0.60 * sProg,
+          height: 0.42 + 0.45 * sProg,
+          force: false
+        });
+        LT.spawnMult = 1.0 + 2.2 * sProg;
+        if (blackEl) blackEl.style.opacity = "0";
+      }
+      else if (sceneIdx === 3){
+        // blackout
+        const a = Math.min(1, sProg * 1.4);
+        if (blackEl) blackEl.style.opacity = String(a);
+
+        // brief hue shove 225→215 to feel “stressed”
+        const h = 215 + 10 * Math.max(0, 1 - sProg*1.4);
+        document.querySelectorAll("#lampsRow .lampWrap").forEach(w=>{
+          w.style.setProperty("--hue", h + "deg");
+        });
+
+        __setLampDegrade({
+          bands: 0.55,
+          haze:  0.50,
+          jitter: 0.20 * (1 - sProg)
+        });
+
+        // force smoke behind the blackout
+        window.__smokeSetBoost?.({
+          mult: 2.8,
+          alpha: 0.90,
+          height: 0.96,
+          force: false
+        });
+        LT.spawnMult = 3.2;
+
+        // fade lamp visuals out but still respect manual ON
+        const lampI = Math.max(0, 1 - sProg * 1.15);
+        __applyLampIntensity(window.__lampsOn ? lampI : 0);
+
+      } else {
+        // lantern scene
+        __setLampVisualIntensityIfOn(1.0);
+        __setLampDegrade({ bands: 0, haze: 0, jitter: 0 });
+        window.__smokeSetBoost?.(null);
+        LT.spawnMult = 1;
+        if (blackEl) blackEl.style.opacity = "0";
+      }
+
+      // fliers (if you have them)
+      window.__lampFliers?.setScene(artScene);
+      window.__lampFliers?.setProgress(sProg);
+      window.__lampFliers?.update();
+
+      // spawn litter
+      while (LT.acc > 85){
+        const base  = 4 + (Math.random()*4|0);
+        const count = Math.max(1, Math.round(base * (LT.spawnMult ?? 1)));
+        window.spawnLampLitter?.(artScene, count);
+        LT.acc -= 85;
+      }
+
+      // lock parallax x each tick
+      gsap.set("#parallaxNearStack", { x: 0 });
+      gsap.set("#parallaxFarStack",  { x: 0 });
+    },
 
     onRefresh(){},
     invalidateOnRefresh: true,

@@ -11,15 +11,10 @@
   z-index: 2;
 }
 
-#lampsGroundBase{
-  position:absolute; left:0; bottom:0;
-  width:100vw; z-index:4;
-}
+#lampsGroundBase{ position:absolute; left:0; bottom:0; width:100vw; z-index:4; }
 
 /* stacked ground fades (5→8) */
-#lampsGroundStack{
-  position:absolute; inset:0; z-index:3;
-}
+#lampsGroundStack{ position:absolute; inset:0; z-index:3; }
 #lampsGroundStack img.ground{
   position:absolute; left:0; right:0; bottom:0;
   width:100vw; height:auto; object-fit:cover;
@@ -31,8 +26,7 @@
   position:absolute; inset:0; z-index:6; pointer-events:auto;
 }
 #lampsRow .lampWrap{
-  position:absolute; bottom:0;
-  transform:translateX(-50%);
+  position:absolute; bottom:0; transform:translateX(-50%);
   display:flex; align-items:flex-end;
   height:var(--lampH);                /* set via JS */
   transform-origin:bottom center;
@@ -96,6 +90,8 @@
   --hue: 40deg;     /* 40° = warm lantern, 58°+ = cold streetlight */
   --glowOn: .95;    /* per-scene intensity controls */
   --beamOn: .85;
+  --beamBands: 0;   /* added: banding overlay strength (0–1) */
+  --beamHaze: 0;    /* added: air haze strength (0–1) */
 }
 
 /* CLICKABLE AREA (geometry only; canvas handles click logic) */
@@ -105,7 +101,7 @@
   top:  var(--hitTop, 200px);
   width: var(--hitW, 110px);
   height: var(--hitH, 65%);
-  pointer-events: none; /* we only read its rect for hit testing on canvas */
+  pointer-events: none; /* geometry only */
 }
 
 /* base glow now supports oval shaping */
@@ -114,9 +110,7 @@
   left: var(--bx,50%); top: var(--by,0%);
   width: var(--bw,80px); height: var(--bh,80px);
   transform: translate(-50%, -50%) scale(var(--gScaleX,1), var(--gScaleY,1));
-  /* circle by default; streetlight will override with ellipse center lower */
-  background: radial-gradient(closest-side,
-              rgba(255,240,180,0.95), rgba(255,240,180,0) 70%);
+  background: radial-gradient(closest-side, rgba(255,240,180,0.95), rgba(255,240,180,0) 70%);
   border-radius: 999px;
   filter: blur(2px);
   opacity: 0;
@@ -127,14 +121,12 @@
 
 /* cooler, oval glow for streetlight */
 .lampWrap.isStreet .lamp-glow{
-  /* put hotspot slightly below center so it hugs the hood */
   background: radial-gradient(ellipse at 50% 62%,
               hsla(var(--hue,200deg), 90%, 88%, 0.95) 0%,
               hsla(var(--hue,200deg), 80%, 70%, 0.50) 35%,
               hsla(var(--hue,200deg), 70%, 55%, 0.22) 60%,
               rgba(0,0,0,0) 80%);
 }
-
 
 /* default = cone beam */
 .lampWrap .lamp-beam{
@@ -175,6 +167,39 @@
   opacity: 0;
 }
 
+/* overlays to show “air damage” in later scenes */
+.lampWrap .lamp-beam::before,
+.lampWrap .lamp-beam::after{
+  content:"";
+  position:absolute; inset:0; pointer-events:none;
+  opacity:0; transition:opacity .18s linear;
+}
+.lampWrap .lamp-beam::before{
+  /* banding / brownout lines */
+  background:
+    repeating-linear-gradient(
+      to bottom,
+      rgba(230,220,200,0.06) 0 8px,
+      rgba(0,0,0,0) 8px 16px
+    );
+  mix-blend-mode: screen;
+  opacity: var(--beamBands, 0);
+}
+.lampWrap .lamp-beam::after{
+  /* thick, dirty air streaks */
+  background:
+    linear-gradient(to bottom,
+      rgba(180,180,200,0.18) 0%,
+      rgba(120,120,160,0.12) 25%,
+      rgba(40,40,60,0.00) 80%),
+    radial-gradient(ellipse at 50% 0%,
+      rgba(255,255,255,0.06) 0%,
+      rgba(255,255,255,0.00) 70%);
+  filter: blur(0.5px);
+  mix-blend-mode: screen;
+  opacity: var(--beamHaze, 0);
+}
+
 /* ON state uses per-scene intensities */
 #lampsScene .lampWrap.on .lamp-glow{ opacity: var(--glowOn, .95); }
 #lampsScene .lampWrap.on .lamp-beam{ opacity: var(--beamOn, .85); }
@@ -198,24 +223,14 @@
 
 /* litter canvas */
 #litterCanvas{
-  position:absolute;
-  inset:0;
-  width:100%;
-  height:100%;
-  z-index:40;
-  pointer-events:auto;
-  isolation:isolate;
-  cursor:default;
+  position:absolute; inset:0; width:100%; height:100%;
+  z-index:40; pointer-events:auto; isolation:isolate; cursor:default;
   transition: cursor 0.2s;
 }
 #litterCanvas.dragging { cursor: grabbing; }
 
-
 #smokeCanvas{
-  position:absolute;
-  inset:0;
-   width:100%;
-  height:100%;
+  position:absolute; inset:0; width:100%; height:100%;
   z-index:5;       /* < lampsRow (6), > near/far stacks (1–3) */
   pointer-events:none;
 }
