@@ -42,11 +42,7 @@ function updateWrecks(dt, gy){
     }
   }
 }
-// ---- plane smoke ribbon (perf-friendly) ----
-const PLANE_TRAIL_POINTS   = 20;    // ring buffer length per plane
-const PLANE_TRAIL_SAMPLEMS = 60;    // sample every ~60ms
-const PLANE_TRAIL_WIDTH    = 8;     // starting line width
-const PLANE_TRAIL_ALPHA    = 0.20;  // overall opacity cap
+
 
   // wiring from lamps scene
   let currentScene=0;    // 0..2
@@ -72,6 +68,116 @@ const PLANE_TRAIL_ALPHA    = 0.20;  // overall opacity cap
   // physics-ish
   const G = 380; // px/s^2
   const DRAG = 0.985;
+// --- CLOUDY TRAILS (cheap puff impostors) -----------------------------
+const TRAIL_MAX_PUFFS = 220;     // global cap (perf guard)
+const TRAIL_SPAWN_MS  = [70, 110]; // spawn cadence per plane (ms)
+const TRAIL_PUFFS = [];          // pooled list of puffs
+let __puffStamp;                 // offscreen radial gradient
+
+// Build a reusable radial gradient stamp once (fast drawImage later)
+function buildPuffStamp(){
+  if (__puffStamp) return __puffStamp;
+  const s = 64;
+  const oc = document.createElement('canvas');
+  oc.width = s; oc.height = s;
+  const c = oc.getContext('2d');
+  const g = c.createRadialGradient(s/2, s/2, 1, s/2, s/2, s/2);
+  g.addColorStop(0.00, 'rgba(255,255,255,0.28)');
+  g.addColorStop(0.35, 'rgba(220,225,230,0.20)');
+  g.addColorStop(0.70, 'rgba(180,185,195,0.10)');
+  g.addColorStop(1.00, 'rgba(160,165,175,0.00)');
+  c.fillStyle = g;
+  c.fillRect(0,0,s,s);
+  __puffStamp = oc;
+  return oc;
+}
+
+// light “value noise” to curl the plume
+function curl(nx, ny, t){
+  // nx,ny in pixels → small freqs to keep it gentle
+  return Math.sin((nx + t*60) * 0.006) * 0.35 +
+         Math.cos((ny - t*40) * 0.004) * 0.25;
+}
+
+// spawn a puff just behind the plane’s nose
+function trailSpawnPuff(plane){
+  if (TRAIL_PUFFS.length >= TRAIL_MAX_PUFFS) {
+    // drop oldest to keep CPU stable
+    TRAIL_PUFFS.shift();
+  }
+  const dir = plane.dir || 1; // +1 L→R, -1 R→L
+  const baseX = plane.x - dir * plane.size * 1.8;   // behind nose
+  const baseY = plane.y + (Math.random()*2 - 1) * 3; // tiny vertical jitter
+
+  // lateral jitter so it isn’t a line
+  const jitterSide = (Math.random()*2 - 1) * 8;
+
+  TRAIL_PUFFS.push({
+    x: baseX,
+    y: baseY + jitterSide*0.15,
+    r: 8 + Math.random()*4,      // start radius
+    a: 0.23 + Math.random()*0.05, // opacity
+    life: 0,                     // 0..1
+    grow: 18 + Math.random()*10, // px/sec radius growth
+    vx: (plane.vx * 0.08) - dir * (12 + Math.random()*8), // drift backwards
+    vy: (Math.random()*2 - 1) * 6, // slight vertical drift
+    seed: Math.random()*1000      // noise phase
+  });
+}
+
+// keep a per-plane timer for spawn cadence
+function ensureTrailState(a){
+  if (a._trailNext == null) {
+    a._trailNext = performance.now() + (TRAIL_SPAWN_MS[0] + Math.random()*(TRAIL_SPAWN_MS[1]-TRAIL_SPAWN_MS[0]));
+  }
+}
+
+function trailPushSample(a, dt){
+  ensureTrailState(a);
+  const now = performance.now();
+  if (now >= a._trailNext){
+    trailSpawnPuff(a);
+    a._trailNext = now + (TRAIL_SPAWN_MS[0] + Math.random()*(TRAIL_SPAWN_MS[1]-TRAIL_SPAWN_MS[0]));
+  }
+}
+
+// move/fade puffs + add “curl” so it looks like fumes
+function updateTrails(dt){
+  const t = performance.now()/1000;
+  for (let i=TRAIL_PUFFS.length-1;i>=0;i--){
+    const p = TRAIL_PUFFS[i];
+
+    // curl force (very cheap)
+    const k = curl(p.x*0.7, p.y*0.7, t + p.seed*0.001);
+    p.vx += k * 3 * dt;
+    p.vy += k * 1.5 * dt;
+
+    p.x += p.vx * dt;
+    p.y += p.vy * dt;
+
+    p.r += p.grow * dt;          // widen plume
+    p.life += dt * 0.6;          // normalize to ~1.5–2s lifespan
+    p.a *= 0.985;                // slow fade
+
+    // reap
+    if (p.a <= 0.02 || p.r >= 90){
+      TRAIL_PUFFS.splice(i,1);
+    }
+  }
+}
+
+// draw the puffs UNDER planes (so planes stay crisp)
+function drawTrails(ctx){
+  const stamp = buildPuffStamp();
+  for (let i=0;i<TRAIL_PUFFS.length;i++){
+    const p = TRAIL_PUFFS[i];
+    ctx.save();
+    ctx.globalAlpha = Math.max(0, Math.min(1, p.a));
+    const s = p.r*2;
+    ctx.drawImage(stamp, p.x - p.r, p.y - p.r, s, s);
+    ctx.restore();
+  }
+}
 
   // util
   const clamp=(a,v,b)=>Math.max(a,Math.min(b,v));
@@ -151,15 +257,19 @@ const PLANE_TRAIL_ALPHA    = 0.20;  // overall opacity cap
     const fromLeft = Math.random() < 0.5;
     const x0 = fromLeft ? -60 : (w+60);
     const y0 = rand(band.y1, band.y2);
-    return {
-      type:"plane", state:"fly",
-      x:x0, y:y0, yBase:y0,
-      dir: (fromLeft ? 1 : -1),              // ← remember L→R or R→L
-   vx:  rand(...PLANE.speed) * (fromLeft?1:-1),
-      amp: rand(...PLANE.amp), freq: rand(...PLANE.freq), phase: rand(0,Math.PI*2),
-      size: rand(...PLANE.size),
-      a:0, t:0, hoverT:0, vy:0, rot:0, rotV:0
-    };
+  return {
+  type:"plane", state:"fly",
+  x:x0, y:y0, yBase:y0,
+  dir: (fromLeft ? 1 : -1),
+  vx:  rand(...PLANE.speed) * (fromLeft?1:-1),
+  amp: rand(...PLANE.amp), freq: rand(...PLANE.freq), phase: rand(0,Math.PI*2),
+  size: rand(...PLANE.size),
+  a:0, t:0, hoverT:0, vy:0, rot:0, rotV:0,
+
+  // arm the puff timer immediately (first spawn ~40–90ms)
+  _trailNext: performance.now() + (TRAIL_SPAWN_MS[0] + Math.random()*(TRAIL_SPAWN_MS[1]-TRAIL_SPAWN_MS[0])),
+};
+
   }
   function makeDrone(){
     const band = lampBand();
@@ -302,16 +412,21 @@ function drawShadow(x,y, gy, alpha=0.15){
     if (best>=0){ knockDown(actors[best]); lastKnockTs=now; }
   }
 
-  function knockDown(a){
-    const now=performance.now();
-    if (now - lastKnockTs < CLICK_COOLDOWN_MS) return;
-    a.state="fall";
-    a.a = Math.max(0.6, a.a);      // ensure visible
-    a.vy = rand(40, 70);           // downward
-    a.vx *= 0.40;
-    a.rotV = (a.type==="plane") ? rand(-1.2,1.2)*0.004 : rand(-1.6,1.6)*0.005;
-    lastKnockTs = now;
-  }
+function knockDown(a){
+  const now=performance.now();
+  if (now - lastKnockTs < CLICK_COOLDOWN_MS) return;
+  a.state="fall";
+  a.a = Math.max(0.6, a.a);
+  a.vy = rand(40, 70);
+  a.vx *= 0.40;
+  a.rotV = (a.type==="plane") ? rand(-1.2,1.2)*0.004 : rand(-1.6,1.6)*0.005;
+
+// stop emitting puffs after the hit
+a._trailNext = Number.POSITIVE_INFINITY;
+
+  lastKnockTs = now;
+}
+
 
   function explodeIntoDebris(a, gy){
   const pieces=[];
@@ -351,6 +466,8 @@ function drawShadow(x,y, gy, alpha=0.15){
   wrecks.push(...pieces);
   if (wrecks.length > MAX_WRECKS) wrecks.splice(0, wrecks.length - MAX_WRECKS);
 }
+
+
 
   function maybeSpawn(now, seg){
     // seg mapping: lean toward planes early, drones later
@@ -396,6 +513,10 @@ function loop(ts){
     const gy = groundY();
     updateWrecks(dt, gy);
 
+     //keep the cloudy plume alive >>>
+  updateTrails(dt);
+  drawTrails(ctx);
+
     const seg = segFromScene(currentScene, sceneProg);
 
     if (seg !== lastSeg){
@@ -435,6 +556,11 @@ function loop(ts){
               + Math.sin(a.phase + a.t*a.freq)*a.amp
               + Math.sin(a.t*0.7)*1.2;
         }
+
+         //  sample the smoke trail for planes (after x/y are updated) <<<
+  if (a.type === "plane"){
+    trailPushSample(a, dt);
+  }
 
         // fade logic
         a.a += (a.state==="retire" ? -0.05 : 0.035);
@@ -479,11 +605,13 @@ function loop(ts){
       }
 
       // draw live
-      if (a.a > 0){
-        drawShadow(a.x, a.y, gy);
-        if (a.type==="plane") drawPlane(a);
-        else drawDrone(a);
-      }
+  if (a.a > 0){
+  // trail first so it appears behind the plane
+  drawShadow(a.x, a.y, gy);
+  if (a.type === "plane") drawPlane(a);
+  else drawDrone(a);
+}
+
 
       if (a.a > 0 && a.y < h + 200) alive.push(a);
     }
