@@ -1,0 +1,63 @@
+/* outro.css — refined spacing + subtler top gradient */
+#outro{
+  position: relative;
+  width: 100%;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+
+  /* Pure white base + VERY soft soot gradient at TOP (intro had warm bottom) */
+  background:
+    linear-gradient(
+      to bottom,
+      rgba(0,0,0,0.10) 0%,
+      rgba(0,0,0,0.06) 14%,
+      rgba(0,0,0,0.03) 28%,
+      rgba(0,0,0,0.00) 50%
+    ),
+    #ffffff;
+
+  color: #4b4a4a;
+  font-family: "Courier Prime", monospace;
+  z-index: 1;
+  overflow: hidden;
+}
+
+#outroMainLine{
+  display: flex;
+  align-items: center;
+  gap: 2px;                /* matches intro headline spacing */
+  font-size: 3rem;
+  letter-spacing: 1.5px;
+  line-height: 1.02;       /* tighter line box like your intro */
+  z-index: 3;
+  margin: 0;
+}
+
+#outroMainText,
+#outroDot{
+  opacity: 0;
+  transition: opacity 1s ease-in-out;
+  font-family: "Special Elite", serif;
+  z-index: 3;
+}
+
+#outroSubText{
+  /* Bring the subline closer to the title (was 10px) */
+  margin-top: 0px;
+  font-size: 1.2rem;
+  line-height: 1.15;       /* slightly tighter like scene 1 */
+  opacity: 1;
+  z-index: 3;
+}
+
+/* keep layout space but hide visually until reveal (same pattern as scene 1) */
+#outroSubText.hidden{
+  display: block;
+  visibility: hidden;
+  opacity: 0;
+}
+
+.hidden{ display: none; }

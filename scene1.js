@@ -1,6 +1,6 @@
 // Scene 1 (landing) intro + particles + handoff to background bridge
 (() => {
-  const mainText = "TAKE A BREATH";
+  const mainText = "BREATHE IN";
   const mainTextEl   = document.getElementById("mainText");
   const dotEl        = document.getElementById("dot");
   const subTextEl    = document.getElementById("subText");

@@ -563,7 +563,7 @@ function __applyLampIntensity(t){
   document.querySelectorAll("#lampsRow .lamp").forEach(img=>{
     // Keep the drop-shadow AND dim/brighten the sprite.
     // Floor brightness high enough to avoid “black” lamps when OFF.
-    const b = 0.90 + 0.60 * clamped; // OFF≈0.55, ON≈1.15 (nice pop)
+    const b = 0.90 + 0.60 * clamped; // OFF≈0.90, ON≈1.50
     img.style.filter =
       `drop-shadow(0 6px 16px rgba(0,0,0,.35)) brightness(${b.toFixed(3)}) contrast(1.02)`;
   });
@@ -771,27 +771,34 @@ function buildCrossfade(){
   preloadPuffs();
 
   /* Tuning */
-  const MAX_PARTS       = 360;
+  const MAX_PARTS       = 520;
   const TARGET_FPS      = 30;
   const BASE_SPAWN      = 1.0;
   const DRAG            = 0.985;
-  const CEILING_FRAC    = 0.18;
-  const LIFT_BASE       = -0.050;
-  const WIND_K          = 0.06;
+  const CEILING_FRAC    = 0.10;  // rises higher before capping
+  const LIFT_BASE       = -0.080; // stronger updraft
+  const WIND_K          = 0.10;   // stronger horizontal wind coupling
 
-  const SMOG = { 0:{a:0.15,h:0.28}, 1:{a:0.25,h:0.42}, 2:{a:0.38,h:0.58} };
+  const SMOG = { 0:{a:0.10,h:0.22}, 1:{a:0.28,h:0.46}, 2:{a:0.52,h:0.70} };
   let smogAlpha  = 0;
   let smogHeight = 0;
 
-  const SCENE_MULT = { 0:0.65, 1:1.00, 2:1.40 };
+  const SCENE_MULT = { 0:0.45, 1:1.00, 2:1.60 }; // scene 0 fewer puffs, scene 2 more
 
   let lampsOn = false;
   let currentScene = 0;
   let globalWind = 0;
 
-  // main override so Scene 4 can force emission even if lamps are off
+  // main override so Scene 3 can force emission even if lamps are off
   let override = null;
   window.__smokeSetBoost = (o)=>{ override = o || null; };
+
+  // NEW: per-scene size & speed multipliers (with Scene 2 optional bump)
+const SIZE_SCENE  = { 0: 0.70, 1: 1.15, 2: 1.55, 3: 2.40 }; // 0 smaller, 3 bigger
+const SPEED_SCENE = { 0: 0.55, 1: 1.10, 2: 1.45, 3: 2.30 }; // 0 slower, 3 faster
+// extra control: how strongly puffs rise & catch wind per scene
+const LIFT_SCENE =  { 0: 0.55, 1: 1.00, 2: 1.25, 3: 1.70 }; // scene 0 rises weakly
+const WIND_SCENE =  { 0: 0.50, 1: 1.00, 2: 1.25, 3: 1.60 }; // scene 0 barely advects
 
   function size() {
     const w = cvs.clientWidth | 0;
@@ -821,15 +828,27 @@ function buildCrossfade(){
 
   function spawn(ex, ey, near=true) {
     if (!assetsReady || !puffImgs.length) return;
+
+    // NEW: size & speed multipliers (override wins)
+    const speedMul = (override && override.speed) || (SPEED_SCENE[currentScene] || 1);
+    const sizeMul  = (override && override.size)  || (SIZE_SCENE[currentScene]  || 1);
+
     const p = getPart();
     p.x = ex + rand(-6, 6);
     p.y = ey + rand(-2, 2);
-    p.vx = rand(-0.12, 0.12);
-    p.vy = -0.050 + rand(-0.015, -0.030);
+
+    // CHANGED: initial velocities scale with speed
+    const windMul = (override && override.wind) || (WIND_SCENE[currentScene] || 1);
+ p.vx = rand(-0.12, 0.12) * speedMul * windMul;
+    p.vy = (-0.050 + rand(-0.015, -0.030)) * speedMul;
+
     p.rot = rand(0, Math.PI * 2);
     p.img = pick(puffImgs);
     p.depth = near ? 'near' : 'far';
-    p.s = near ? rand(0.05, 0.20) : rand(0.03, 0.09);
+
+    // CHANGED: sizes scale with scene (and override)
+    p.s = (near ? rand(0.05, 0.20) : rand(0.03, 0.09)) * sizeMul;
+
     p.aBase = near ? rand(0.55, 0.85) : rand(0.45, 0.72);
     p.life = 1.0;
     parts.push(p);
@@ -875,19 +894,30 @@ function buildCrossfade(){
 
     for (let i=parts.length-1;i>=0;i--){
       const p = parts[i];
-      p.vx += globalWind * WIND_K * (p.depth === 'near' ? 1.0 : 0.65);
-      p.vy += LIFT_BASE;
+
+      // NEW: per-frame speed multiplier (override wins)
+    const speedMul = (override && override.speed) || (SPEED_SCENE[currentScene] || 1);
+    const liftMul  = (override && override.lift)  || (LIFT_SCENE[currentScene]  || 1);
+    const windMul  = (override && override.wind)  || (WIND_SCENE[currentScene]  || 1);
+
+      // CHANGED: wind & lift scale with speed
+     p.vx += globalWind * WIND_K * speedMul * windMul * (p.depth === 'near' ? 1.0 : 0.65);
+     p.vy += LIFT_BASE * speedMul * liftMul;
+
 
       if (p.y < ceilY) {
-        p.vx += Math.random()*0.04 - 0.02;
-        p.vy = Math.min(p.vy, -0.02);
+        p.vx += (Math.random()*0.04 - 0.02) * speedMul;
+        p.vy  = Math.min(p.vy, -0.02 * speedMul);
       }
 
-      p.vx *= DRAG;
-      p.vy *= DRAG;
+      // CHANGED: damp with speed (faster = slightly less drag effect)
+      const dragPow = Math.max(0.8, Math.min(1.2, speedMul));
+      p.vx *= Math.pow(DRAG, dragPow);
+      p.vy *= Math.pow(DRAG, dragPow);
+
       p.x  += p.vx * (dt * 60);
       p.y  += p.vy * (dt * 60);
-      p.rot += 0.0009 * (dt * 1000);
+      p.rot += 0.0009 * (dt * 1000) * speedMul;
 
       p.life -= 0.30 * dt;
       if (p.life <= 0 || p.y < -120) { freePart(parts.splice(i,1)[0]); }
@@ -1090,13 +1120,47 @@ preload(ALL).then(async () => {
           jitter: 0.20 * (1 - sProg)
         });
 
-        // force smoke behind the blackout
-        window.__smokeSetBoost?.({
-          mult: 2.8,
-          alpha: 0.90,
-          height: 0.96,
-          force: false
-        });
+        // NEW: much bigger/faster Scene 3 smoke (override wins)
+       // base blackout boost
+ // base blackout—already overwhelming
+ window.__smokeSetBoost?.({
+   mult:   6.0,   // higher base density
+   alpha:  0.99,  // almost fully opaque at top
+   height: 1.00,  // fill the whole viewport
+   speed:  2.60,  // faster drift
+   size:   2.80,  // bigger billows
+   wind:   1.6,   // stronger horizontal coupling
+   lift:   1.7,   // stronger buoyancy
+   force:  true
+ });
+
+ // final 25% → surge (your “scene 4 inside scene 3”)
+ if (sProg > 0.75) {
+   const t = (sProg - 0.75) / 0.25;           // 0→1
+   window.__smokeSetBoost?.({
+     mult:   6.0 + 4.0 * t,                   // up to ~10.0
+     alpha:  0.99,                            // cap
+     height: 1.00,                            // cap
+     speed:  2.60 + 0.80 * t,                 // up to ~3.40
+     size:   2.80 + 0.60 * t,                 // up to ~3.40
+     wind:   1.6  + 0.6  * t,                 // gustier
+     lift:   1.7  + 0.5  * t,                 // rises harder
+     force:  true
+   });
+ }
+
+ // EXTRA SURGE in last quarter of blackout (your “scene 4” feel)
+ if (sProg > 0.75) {
+   const t = (sProg - 0.75) / 0.25; // 0→1 as we near the end
+   window.__smokeSetBoost?.({
+     mult:   4.5 + 2.0 * t,   // up to ~6.5
+     alpha:  0.98,            // keep cap
+     height: 1.00,            // keep cap
+     speed:  2.20 + 0.80*t,   // up to ~3.0
+     size:   2.20 + 0.80*t,   // up to ~3.0
+     force:  true
+   });
+ }
         LT.spawnMult = 3.2;
 
         // fade lamp visuals out but still respect manual ON

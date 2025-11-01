@@ -22,6 +22,7 @@
    <link rel="stylesheet" href="fliers.css" />
     <link rel="stylesheet" href="city-reveal.css" />
     <link rel="stylesheet" href="lamps.css" />
+       <link rel="stylesheet" href="outro.css" />
 </head>
 <body>
   <button id="micWindBtn" style="position:fixed; right:16px; bottom:16px; z-index:9999; padding:10px 14px; border:0; border-radius:10px; cursor:pointer; background:#0a0a0d; color:#e6e6f0; font:600 14px/1 system-ui; box-shadow:0 6px 20px rgba(0,0,0,.25); opacity:.9">
@@ -42,7 +43,7 @@
     <div id="mainLine">
       <h1 id="mainText"></h1><span id="dot" class="hidden">.</span>
     </div>
-    <p id="subText" class="hidden">let the collapse begin</p>
+    <p id="subText" class="hidden">The world waits, untouched</p>
     <div id="scrollHint" class="hidden">scroll ↓</div>
     <canvas id="particleCanvas"></canvas>
   </section>
@@ -85,6 +86,13 @@
   <div id="lampsRow" aria-hidden="true"></div>
 
 </section>
+  <!-- ===== Scene ∞ (Outro / Reflective End) ===== -->
+  <section id="outro" aria-label="Exhale">
+    <div id="outroMainLine">
+      <h1 id="outroMainText"></h1><span id="outroDot" class="hidden">.</span>
+    </div>
+    <p id="outroSubText" class="hidden">The world does not wait the same</p>
+  </section>
 
 
   <!-- Scripts (after DOM so ids exist) -->
@@ -98,6 +106,7 @@
   <script src="scene1.js"></script>
   <script src="city-reveal.js"></script>
   <script src="bg.js"></script>
+    <script src="outro.js"></script>
 </body>
 
 </html>
