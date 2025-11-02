@@ -1,176 +1,23 @@
-// mic-wind.js
-// --- debug meter ---
-const meter = document.createElement('div');
-meter.style.cssText = `
-  position:fixed; left:16px; bottom:16px; width:160px; height:10px;
-  background:rgba(255,255,255,.15); border-radius:6px; overflow:hidden;
-  z-index:9999; box-shadow:0 4px 16px rgba(0,0,0,.25)`;
-const fill = document.createElement('div');
-fill.style.cssText = `height:100%; width:0%; background:#74f; transition:width .08s linear`;
-meter.appendChild(fill);
-document.body.appendChild(meter);
-function meterSet(p){ fill.style.width = Math.round(p*100) + '%'; }
+// mic-wind.js  — breath-driven wind (trees + leaves) with audio + debug meter
 
-
-
-
+/* ---------- tiny debug meter (bottom-left) ---------- */
 (() => {
-  let ctx, analyser, source, rafId = 0, enabled = false;
-  let baseline = 0.00;        // adaptive noise floor
-  let smoothed = 0.0;         // smoothed breath strength 0..1
-  const data = new Float32Array(2048);
-
-  // simple helpers
-  const clamp01 = v => Math.max(0, Math.min(1, v));
-  const lerp = (a,b,t) => a + (b-a)*t;
-
-  // map current scene segment to max wind amplitude (match your gusts)
-  function segFromProgress(p){
-    if (p < 1/3) return 0; if (p < 2/3) return 1; return 2;
-  }
-  function maxWindForSeg(seg){
-    // you used ~0.15 in seg0, ~0.45 in seg1, and 0 in seg2
-    return seg === 0 ? 0.15 : seg === 1 ? 0.45 : 0.0;
-  }
-
-  function analyse() {
-    if (!enabled || !analyser) return;
-
-    analyser.getFloatTimeDomainData(data);
-
-    // Center, then compute RMS (energy). Also high-pass-ish by subtracting mean.
-    let mean = 0;
-    for (let i = 0; i < data.length; i++) mean += data[i];
-    mean /= data.length;
-
-    let rms = 0;
-    for (let i = 0; i < data.length; i++) {
-      const v = data[i] - mean;
-      rms += v * v;
-    }
-    rms = Math.sqrt(rms / data.length);
-
-    // Update adaptive baseline (slowly)
-    // baseline tracks ambient room noise so "quiet room" ≈ 0
-    baseline = lerp(baseline, rms, 0.015);  
-
-    // "Net" breath energy above baseline
-    let net = rms - (baseline * 1.05);    // slight gate above baseline
-    if (net < 0) net = 0;
-
-    // Normalize to a rough expected mic range (tweakable)
-    // Many built-in mics give rms 0.02..0.2 when blowing
-    // scale so net=0.12 → strength~1
-    const strength = clamp01(net / 0.04); 
-
-    // Smooth it (fast attack, slow-ish release feels natural)
-    const target = strength;
-    const k = (target > smoothed) ? 0.35 : 0.12; // attack / release
-    smoothed = lerp(smoothed, target, k);
-meterSet(smoothed);    // Convert strength to wind + tree lean
-    const p = window.__currentProgress || 0;
-    // breath strength 'smoothed' is 0..1
-// give a tiny floor so the world isn't dead silent
-const baseAmbience = 0.06;          // ambience when not breathing
-const breathBoost  = 0.9;           // how much breath adds
-const vol = baseAmbience + smoothed * breathBoost;
-
-// optional: fade out in Bare segment if you want "dead air"
-const seg = segFromProgress(window.__currentProgress || 0);
-const finalVol = (seg === 2) ? baseAmbience * 0.5 : vol;
-
-setWindVolume(finalVol);
-
-    const maxA = maxWindForSeg(seg);
-
-    // dead air in bare stage
-    const windX = maxA * smoothed;
-
-    // Apply to your scene
-    const WIND = window.__WIND__;
-    if (WIND) {
-      // soften injection so it doesn’t fight physics jitter
-      WIND.x = lerp(WIND.x, windX, 0.55);
-    }
-    if (window.__treesMicSway__) {
-      window.__treesMicSway__(smoothed * 1.5); 
-    }
-
-    rafId = requestAnimationFrame(analyse);
-  }
-
- async function enableMic(btn){
-  // Toggle OFF
-  if (enabled) {
-    enabled = false;
-    if (rafId) cancelAnimationFrame(rafId);
-    rafId = 0;
-    try { ctx && ctx.close && ctx.state !== "closed" && await ctx.close(); } catch(e){}
-    ctx = analyser = source = null;
-    smoothed = 0;
-    if (window.__WIND__) window.__WIND__.x = 0;
-    btn && (btn.textContent = "🌬️ Enable Mic Wind");
-
-    // Optionally fade wind out when disabling
-    setWindVolume(0);
-    return;
-  }
-
-  // Toggle ON
-  try {
-    const stream = await navigator.mediaDevices.getUserMedia({
-      audio: { echoCancellation:false, noiseSuppression:false, autoGainControl:false }
-    });
-
-    ctx = new (window.AudioContext || window.webkitAudioContext)();
-    source = ctx.createMediaStreamSource(stream);
-    analyser = ctx.createAnalyser();
-    analyser.fftSize = 2048;
-    analyser.smoothingTimeConstant = 0.2;
-    source.connect(analyser);
-
-    // ---- START/UNLOCK WIND AUDIO LOOP HERE ----
-    // Use your real file path. Keep it short & seamless.
-    await loadWindAudio("sounds/whoosh_soft.mp3"); // e.g. /audio/wind-loop.mp3
-    if (windACtx && windACtx.state === "suspended") {
-      await windACtx.resume();
-    }
-    // small ambient floor
-    setWindVolume(0.06);
-
-    // Kick off analysis
-    enabled = true;
-    baseline = 0.00; smoothed = 0.0;
-    btn && (btn.textContent = "🛑 Disable Mic Wind");
-    analyse();
-  } catch (err) {
-    console.error("Mic error:", err);
-    alert("Couldn’t access the microphone. Check permissions/HTTPS.");
-  }
-}
-
-  function attachButton(){
-    const btn = document.getElementById("micWindBtn");
-    if (!btn) return;
-    btn.addEventListener("click", () => enableMic(btn));
-  }
-
-  if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", attachButton);
-  } else {
-    attachButton();
-  }
-
-  // Expose for debugging if you want
-  window.__micWind__ = { enable: () => {
-    const btn = document.getElementById("micWindBtn");
-    return enableMic(btn);
-  }};
+  const meter = document.createElement('div');
+  meter.style.cssText = `
+    position:fixed; left:16px; bottom:16px; width:160px; height:10px;
+    background:rgba(255,255,255,.15); border-radius:6px; overflow:hidden;
+    z-index:9999; box-shadow:0 4px 16px rgba(0,0,0,.25)`;
+  const fill = document.createElement('div');
+  fill.style.cssText = `height:100%; width:0%; background:#74f; transition:width .08s linear`;
+  meter.appendChild(fill);
+  document.body.appendChild(meter);
+  window.__meterSet__ = (p)=>{ fill.style.width = Math.round(p*100) + '%'; };
 })();
-// --- wind audio (loop with gain) ---
+
+/* ---------- wind audio (short loop with gain) ---------- */
 let windACtx, windGain, windSrc, windReady = false;
 
-async function loadWindAudio(url = "audio/wind-loop.mp3") {
+async function loadWindAudio(url = "sounds/whoosh_soft.mp3") {
   try {
     windACtx = windACtx || new (window.AudioContext || window.webkitAudioContext)();
     const res = await fetch(url);
@@ -192,7 +39,6 @@ async function loadWindAudio(url = "audio/wind-loop.mp3") {
   }
 }
 
-// smooth volume set (0..1)
 function setWindVolume(v){
   if (!windReady || !windACtx || !windGain) return;
   const now = windACtx.currentTime;
@@ -200,3 +46,169 @@ function setWindVolume(v){
   windGain.gain.cancelScheduledValues(now);
   windGain.gain.linearRampToValueAtTime(Math.max(0, Math.min(1, v)), now + t);
 }
+
+/* ---------- main mic logic ---------- */
+(() => {
+  let ctx, analyser, source, rafId = 0, enabled = false;
+  let baseline = 0.00;                 // adaptive noise floor
+  const data = new Float32Array(2048);
+
+  // helpers
+  const clamp01 = v => Math.max(0, Math.min(1, v));
+  const lerp = (a,b,t) => a + (b-a)*t;
+
+  // per-scene segment mapping (kept for your existing progress logic)
+  function segFromProgress(p){
+    if (p < 1/3) return 0; if (p < 2/3) return 1; return 2;
+  }
+
+  // state shared with other scripts (trees/leaves will read these)
+  if (window.__breathEnv__  == null) window.__breathEnv__  = 0;  // slow envelope
+  if (window.__breathFast__ == null) window.__breathFast__ = 0;  // fast gusts
+  if (window.__breathPhase__== null) window.__breathPhase__= 0;  // internal osc
+
+  // ---- ANALYSIS LOOP ----
+  function analyse() {
+    if (!enabled || !analyser) return;
+
+    analyser.getFloatTimeDomainData(data);
+
+    // 1) center + RMS
+    let mean = 0;
+    for (let i = 0; i < data.length; i++) mean += data[i];
+    mean /= data.length;
+
+    let rms = 0;
+    for (let i = 0; i < data.length; i++) {
+      const v = data[i] - mean;
+      rms += v * v;
+    }
+    rms = Math.sqrt(rms / data.length);
+
+    // 2) adaptive baseline (slightly quicker so tiny breaths register)
+    baseline = lerp(baseline, rms, 0.025);
+
+    // 3) net breath above baseline
+    let net = rms - (baseline * 1.02);
+    if (net < 0) net = 0;
+
+    // 4) sensitivity — smaller divisor => stronger response
+    //    Tweak this one value if you want everything to react more/less:
+    const strengthRaw = clamp01(net / 0.030); // (0.028 default-ish, 0.022 stronger)
+
+    // 5) two time-constants: envelope (slow) + gusts (fast)
+    const envAttack  = 0.50, envDecay  = 0.06;
+    const gustAttack = 0.75, gustDecay = 0.30;
+
+    {
+      const target = strengthRaw;
+      const k = (target > window.__breathEnv__) ? envAttack : envDecay;
+      window.__breathEnv__ = lerp(window.__breathEnv__, target, k);
+    }
+    {
+      const target = strengthRaw;
+      const k = (target > window.__breathFast__) ? gustAttack : gustDecay;
+      window.__breathFast__ = lerp(window.__breathFast__, target, k);
+    }
+
+    // debug meter shows the smooth envelope
+    window.__meterSet__ && window.__meterSet__(window.__breathEnv__);
+
+    // 6) audio volume
+    const baseAmbience = 0.10;
+    const breathBoost  = 0.95;
+    const p   = window.__currentProgress || 0;
+    const seg = segFromProgress(p);
+    const vol = baseAmbience + window.__breathEnv__ * breathBoost;
+    const finalVol = (seg === 2) ? baseAmbience * 0.6 : vol;
+    setWindVolume(finalVol);
+
+    // 7) horizontal wind push (optional global for physics etc.)
+    const maxA0 = 0.20, maxA1 = 0.55; // seg 0/1
+    const maxA  = seg === 0 ? maxA0 : seg === 1 ? maxA1 : 0.05;
+    const windX = maxA * window.__breathEnv__;
+    if (window.__WIND__) { window.__WIND__.x = lerp(window.__WIND__.x || 0, windX, 0.60); }
+
+    // 8) trees sway — phasey + envelope (more obvious)
+    if (window.__treesMicSway__) {
+      const swayAmp = 2.6;                 // exaggeration factor
+      const baseHz = 0.40, addHz = 0.55;   // slightly snappier than before
+      window.__breathPhase__ += (baseHz + addHz * window.__breathEnv__) * (1/60);
+      const phase = Math.sin(window.__breathPhase__ * Math.PI * 2);
+      const sway = (0.5 + 0.5 * phase) * window.__breathEnv__ * swayAmp;
+      window.__treesMicSway__(sway);
+    }
+
+    // 9) leaves — gusts + envelope
+    if (window.__leavesMicResponse__) {
+      const gust = Math.max(0, window.__breathFast__ - (window.__breathEnv__ * 0.7));
+      const leafStrength = clamp01(window.__breathEnv__ * 1.2 + gust * 1.8);
+      window.__leavesMicResponse__(leafStrength);
+    }
+
+    rafId = requestAnimationFrame(analyse);
+  }
+
+  // ---- enable/disable mic ----
+  async function enableMic(btn){
+    // Toggle OFF
+    if (enabled) {
+      enabled = false;
+      if (rafId) cancelAnimationFrame(rafId);
+      rafId = 0;
+      try { ctx && ctx.close && ctx.state !== "closed" && await ctx.close(); } catch(e){}
+      ctx = analyser = source = null;
+      if (window.__WIND__) window.__WIND__.x = 0;
+      btn && (btn.textContent = "🌬️ Enable Mic Wind");
+      setWindVolume(0);
+      return;
+    }
+
+    // Toggle ON
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation:false, noiseSuppression:false, autoGainControl:false }
+      });
+
+      ctx = new (window.AudioContext || window.webkitAudioContext)();
+      source = ctx.createMediaStreamSource(stream);
+      analyser = ctx.createAnalyser();
+      analyser.fftSize = 2048;
+      analyser.smoothingTimeConstant = 0.2;
+      source.connect(analyser);
+
+      await loadWindAudio("sounds/whoosh_soft.mp3");
+      if (windACtx && windACtx.state === "suspended") {
+        await windACtx.resume();
+      }
+      setWindVolume(0.06); // small floor
+
+      enabled = true;
+      btn && (btn.textContent = "🛑 Disable Mic Wind");
+      analyse();
+    } catch (err) {
+      console.error("Mic error:", err);
+      alert("Couldn’t access the microphone. Check permissions/HTTPS.");
+    }
+  }
+
+  function attachButton(){
+    const btn = document.getElementById("micWindBtn");
+    if (!btn) return;
+    btn.addEventListener("click", () => enableMic(btn));
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", attachButton);
+  } else {
+    attachButton();
+  }
+
+  // quick dev hook
+  window.__micWind__ = {
+    enable: () => {
+      const btn = document.getElementById("micWindBtn");
+      return enableMic(btn);
+    }
+  };
+})();

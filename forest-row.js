@@ -796,15 +796,112 @@ const G = 0.25, FRICTION = 0.88, ROT_F = 0.97, BOUNCE = 0.3;
 const WIND = { x: 0 };    // shared gust
 window.__WIND__ = WIND; // expose to mic controller
 
-window.__treesMicSway__ = (amt) => {
-  gsap.to("#forestReveal .tree-wrap", {
-   rotation: amt * 2.5,
-    duration: 0.12,
-    ease: "sine.inOut",
-    overwrite: "auto",
-    transformOrigin: "50% 100%" // bottom center
-  });
-};
+// --- Smooth, spring-damped tree sway (no snap-back) ---
+(() => {
+  // State per layer
+  let xF = 0, vF = 0, tF = 0;
+  let xB = 0, vB = 0, tB = 0;
+
+  // Spring: critically-damped feel (no bounce)
+  let omega = 5.2;    // ↓ a touch softer than before
+  const zeta  = 0.95;
+  const k = omega * omega;
+  const c = 2 * zeta * omega;
+
+  let last = performance.now();
+  let ticking = false;
+
+  function tick(){
+    const now = performance.now();
+    let dt = (now - last) / 1000;
+    last = now;
+    if (dt > 0.05) dt = 0.05;
+
+    // integrate front
+    const aF = k * (tF - xF) - c * vF;
+    vF += aF * dt;
+    xF += vF * dt;
+
+    // integrate back
+    const aB = k * (tB - xB) - c * vB;
+    vB += aB * dt;
+    xB += vB * dt;
+
+    gsap.set("#forestReveal .tree", { rotation: xF, transformOrigin:"50% 100%" });
+    gsap.set("#forestReveal .tree-back, #forestReveal .tree-stage", { rotation: xB, transformOrigin:"50% 100%" });
+
+    // keep ticking while moving/offset
+    if (
+      Math.abs(vF) > 0.0006 || Math.abs(vB) > 0.0006 ||
+      Math.abs(tF - xF) > 0.0006 || Math.abs(tB - xB) > 0.0006
+    ){
+      requestAnimationFrame(tick);
+    } else {
+      ticking = false;
+    }
+  }
+
+  // Helper: soft nonlinearity (keeps big breaths controlled)
+  const curve = (x) => (x <= 1 ? x : 1 + (x - 1) * 0.75);
+
+  // Public API: called every frame by mic with “amt” (you can still call it)
+  // We’ll also read the fast channel directly for micro-twitch.
+  window.__treesMicSway__ = (amt = 0) => {
+    const env  = Math.max(0, Math.min(1, window.__breathEnv__  ?? amt));
+    const fast = Math.max(0, Math.min(1, window.__breathFast__ ?? env));
+
+    // Tiny motion floor so trees don’t look dead when leaves still wiggle
+    const floor = 0.015; // ~1.5% of max
+    // Mix: mostly envelope, small gust spice
+    const mixed = Math.max(floor, (env * 0.88) + (fast * 0.18));
+
+    // Map to degrees; foreground a bit stronger than background
+    const frontDeg = curve(mixed) * 3.4;
+    const backDeg  = curve(mixed) * 1.8;
+
+    tF = frontDeg;
+    tB = backDeg;
+
+    if (!ticking){
+      ticking = true;
+      last = performance.now();
+      requestAnimationFrame(tick);
+    }
+  };
+
+  // Calm logic: only relax to 0 after a longer truly-quiet moment
+  let calmTimer = null;
+  function maybeCalmToZero(){
+    const env  = window.__breathEnv__  || 0;
+    const fast = window.__breathFast__ || 0;
+    // lower threshold so small noise still counts as “moving”
+    if (env > 0.015 || fast > 0.02){
+      if (calmTimer){ clearTimeout(calmTimer); calmTimer = null; }
+      return;
+    }
+    if (calmTimer) return;
+    calmTimer = setTimeout(() => {
+      tF = 0; tB = 0;
+      if (!ticking){
+        ticking = true;
+        last = performance.now();
+        requestAnimationFrame(tick);
+      }
+    }, 1400); // wait longer (1.4s) before drifting upright
+  }
+  gsap.ticker.add(maybeCalmToZero);
+
+  // Optional live tuning (open console to tweak omega)
+  window.__treesSpringTune__ = (w=5.2) => {
+    omega = w;
+    // recompute spring constants
+    // (zeta fixed so still critically damped-ish)
+    const _k = w*w, _c = 2*zeta*w;
+    // overwrite in closure
+    // eslint-disable-next-line no-func-assign
+    k = _k; c = _c;  // if your linter complains, convert k/c to let at top
+  };
+})();
 
 /* ---------- low-res buffer just for smoke ---------- */
 const PERF = {
@@ -855,6 +952,9 @@ function leafLoop(){
 
   const now = performance.now(); // single timestamp per frame
    leafLoop.__wokenThisFrame = 0; 
+
+
+   window.__leafRefs__ = { settled, falling };
   // ---- auto quality (keeps 55–60fps) ----
 PERF.frame++;
 const last = (leafLoop.__lastTS || now);
@@ -912,10 +1012,11 @@ if (tractorRect){
                       Math.abs(p.x - mouse.x) < 80 && Math.abs(p.y - mouse.y) < 80;
 
   // FAST PATH: truly idle leaf → no physics, no trig, no rotate
-  if (!p.air && p.vy === 0 && p.rVel === 0 && !mouseActive && !nearTractor){
-    lctx.drawImage(p.img, p.x - half, ground - half, p.size, p.size);
-    return; // ✅
-  }
+ const waking = (window.__wakeAllUntil && performance.now() < window.__wakeAllUntil);
+if (!waking && !p.air && p.vy === 0 && p.rVel === 0 && !mouseActive && !nearTractor){
+  lctx.drawImage(p.img, p.x - half, ground - half, p.size, p.size);
+  return;
+}
 
   // wake by mouse (lightweight, squared distance)
   if (mouseActive){
@@ -988,6 +1089,48 @@ const r2 = MOUSE_WAKE_R2;
 
     const half   = p.size / 2;
     const ground = leafCanvas.height - half - GROUND_RISE_PX;
+// after you declare/refresh the arrays in your render tick:
+window.__leafRefs__ = { settled, falling }; // expose current leaf arrays to mic hook
+
+// expose arrays each frame (keep as-is wherever you already do it)
+window.__leafRefs__ = { settled, falling };
+
+// --- replace mic hook with this version ---
+window.__leavesMicResponse__ = (strength = 0) => {
+  const refs = window.__leafRefs__;
+  if (!refs) return;
+
+  const { settled = [], falling = [] } = refs;
+
+  // when any meaningful breath arrives, bypass the "fast path" for ~300ms
+  if (strength > 0.02) {
+    window.__wakeAllUntil = performance.now() + 300;
+  }
+
+ const IMP  = 2.8 * strength;   // was 2.2
+const LIFT = 0.60 * strength;  // was 0.45
+const SPIN = 0.16 * strength; 
+
+  // Kick ALL resting leaves (not just 1/3rd)
+  for (let i = 0; i < settled.length; i++) {
+    const p = settled[i]; if (!p) continue;
+    // tiny floor so even weak breath is visible
+    const k = Math.max(0.25, strength);
+    p.vx   += (0.4 + Math.random() * 0.9) * IMP * k;
+    p.vy   -= LIFT * (0.4 + Math.random()) * k;
+    p.rVel += (Math.random() - 0.5) * SPIN;
+    p.air   = true;
+  }
+
+  // Push ALL falling leaves sideways (not just 1/2)
+  for (let i = 0; i < falling.length; i++) {
+    const p = falling[i]; if (!p) continue;
+    const k = Math.max(0.25, strength);
+    p.vx   += (0.3 + Math.random() * 0.7) * IMP * k;
+    p.rVel += (Math.random() - 0.5) * SPIN * 0.8;
+  }
+};
+
 
     if (p.y < ground) {
       still.push(p);
@@ -2971,8 +3114,8 @@ if (bg) {
     el.style.cssText =
       "position:fixed;inset:0;pointer-events:none;z-index:1;";
     el.innerHTML = `
-      <img class="far"  src="images/sil_far.png"  style="position:fixed;bottom:18%;left:-5%;width:110%;opacity:.6;filter:blur(0px);">
-      <img class="near" src="images/sil_near.png" style="position:fixed;bottom:10%;left:-5%;width:110%;opacity:.8;filter:blur(0px);">`;
+      <img class="far"  src=""  style="position:fixed;bottom:18%;left:-5%;width:110%;opacity:.6;filter:blur(0px);">
+      <img class="near" src="" style="position:fixed;bottom:10%;left:-5%;width:110%;opacity:.8;filter:blur(0px);">`;
     bg.appendChild(el);
     far = el.querySelector(".far");
     near = el.querySelector(".near");
@@ -3337,6 +3480,39 @@ if (near){
   function start(){ if (running) return; running = true; nextGust(); }
   window.__wind__ = { start };
 })();
+// ✅ Mic → leaves response (strength is 0..1)
+window.__leavesMicResponse__ = function(strength = 0){
+  const refs = window.__leafRefs__;
+  if (!refs) return;
+
+  const { settled = [], falling = [] } = refs;
+
+  // Direction: use current wind sign if available; default to +1
+  const dir  = Math.sign((window.__WIND__ && window.__WIND__.x) || 1) || 1;
+
+  // Tunables — tweak to taste
+  const IMP  = 2.4 * strength;  // lateral impulse
+  const LIFT = 0.55 * strength; // upward kick
+  const SPIN = 0.14 * strength; // rotational nudge
+
+  // Hit EVERY settled leaf (wake them back into air)
+  for (let i = 0; i < settled.length; i++){
+    const p = settled[i];
+    if (!p) continue;
+    p.vx   += (0.4 + Math.random()*0.9) * IMP * dir;
+    p.vy   -= LIFT * (0.6 + Math.random()*0.7);
+    p.rVel += (Math.random() - 0.5) * SPIN;
+    p.air   = true; // mark as airborne so your physics updates it
+  }
+
+  // Also push EVERY falling leaf
+  for (let i = 0; i < falling.length; i++){
+    const p = falling[i];
+    if (!p) continue;
+    p.vx   += (0.25 + Math.random()*0.6) * IMP * dir;
+    p.rVel += (Math.random() - 0.5) * SPIN * 0.7;
+  }
+};
 
 /* ---------- contact shadow animation ---------- */
 function updateShadows(p){
