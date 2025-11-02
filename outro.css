@@ -7,22 +7,12 @@
   flex-direction: column;
   justify-content: center;
   align-items: center;
-
-  /* Pure white base + VERY soft soot gradient at TOP (intro had warm bottom) */
-  background:
-    linear-gradient(
-      to bottom,
-      rgba(0,0,0,0.10) 0%,
-      rgba(0,0,0,0.06) 14%,
-      rgba(0,0,0,0.03) 28%,
-      rgba(0,0,0,0.00) 50%
-    ),
-    #ffffff;
-
+  background: #ffffff;  /* PURE WHITE */
   color: #4b4a4a;
   font-family: "Courier Prime", monospace;
   z-index: 1;
   overflow: hidden;
+  cursor: pointer ;
 }
 
 #outroMainLine{
@@ -61,3 +51,75 @@
 }
 
 .hidden{ display: none; }
+/* ===== Lamps → Outro bridge ===== */
+/* ===== Lamps → Outro bridge (full screen) ===== */
+#bridgeFade{
+  position: relative;
+  width: 100%;
+  height: 100vh;             /* full-screen bridge */
+  background: #ffffff;       /* base white under the gradient */
+  z-index: 2;
+  overflow: hidden;
+}
+
+#bridgeFade .bridgeGradient{
+  position: absolute;
+  inset: 0;
+  --a: 0.95;                 /* top darkness */
+  /* smoother curve; no plateau */
+  background: linear-gradient(
+    to bottom,
+    rgba(0,0,0,var(--a)) 0%,
+    rgba(0,0,0,calc(var(--a)*0.80)) 28%,
+    rgba(0,0,0,calc(var(--a)*0.35)) 62%,
+    rgba(0,0,0,0.001) 100%         /* not hard 0 to avoid a crisp edge */
+  );
+  pointer-events: none;
+  will-change: opacity;
+}
+
+/* soft tail that OVERLAPS the next section */
+#bridgeFade::after{
+  content:"";
+  position:absolute; left:0; right:0;
+  bottom:-18vh;                 /* overlap into the outro */
+  height:18vh;
+  pointer-events:none;
+  background:linear-gradient(
+    to bottom,
+    rgba(0,0,0,0.10) 0%,
+    rgba(0,0,0,0.06) 25%,
+    rgba(0,0,0,0.03) 55%,
+    rgba(0,0,0,0.00) 100%
+  );
+  z-index:3;
+}
+/* Ensure the page behind is pure white */
+html, body { background:#fff; }
+
+/* Outro section head-overlap to kill the seam from its side too */
+#outro{
+  position: relative;
+  isolation: isolate;          /* creates a new stacking context */
+}
+
+/* subtle head fade that sits under the bridge tail */
+#outro::before{
+  content:"";
+  position:absolute;
+  left:0; right:0;
+  top:-18vh;                    /* same magnitude as bridge ::after */
+  height:18vh;
+  pointer-events:none;
+  background:linear-gradient(
+    to bottom,
+    rgba(255,255,255,0.00) 0%,
+    rgba(255,255,255,0.65) 50%,
+    rgba(255,255,255,1.00) 100%
+  );
+  z-index:0;                    /* under outro text */
+}
+
+/* tiny nudge to avoid sub-pixel hairlines on some devices */
+#outro { transform: translateZ(0); }
+#bridgeFade { transform: translateZ(0); }

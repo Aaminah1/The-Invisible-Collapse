@@ -1473,7 +1473,7 @@ function boostTail(k){ tailBoost = Math.max(0, Math.min(1, k||0)); } // NEW
     const s = document.createElement("style");
     s.id = "bgfog-style";
 s.textContent = `
-  #bg #bgFog{ position:fixed; inset:0; pointer-events:none; z-index:6; } /* was 2 */
+  #bg #bgFog{ position:fixed; inset:0; pointer-events:none; z-index:0; } /* was 2 */
   /* Each layer is a full-viewport div with repeat-x background so it never "runs out" */
   #bgFog .layer{
     position:fixed; inset:0;

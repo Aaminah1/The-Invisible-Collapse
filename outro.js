@@ -77,3 +77,41 @@
     }
   });
 })();
+// ----- Lamps → Outro bridge controller -----
+(() => {
+  if (!window.gsap || !window.ScrollTrigger) return;
+  const bridge = document.getElementById('bridgeFade');
+  if (!bridge) return;
+
+  const gradient = bridge.querySelector('.bridgeGradient');
+
+  // make sure the blackout starts "held" when we arrive from lamps
+  // (lamps scene sets it to 1 near the end)
+  function setBridgeAlpha(t){
+    const clamped = Math.max(0, Math.min(1, t));
+    gradient && (gradient.style.setProperty('--a', (0.95 * clamped).toFixed(3)));
+    // fade global blackout in sync: 1 → 0 across the bridge
+    if (typeof window.__blackoutTo === 'function') {
+      window.__blackoutTo(1 - clamped);
+    }
+  }
+
+  // build the scrub
+  gsap.to({}, {
+    scrollTrigger: {
+      trigger: bridge,
+      start: 'top bottom',     // starts just before the bridge reaches view
+      end: 'bottom top',       // ends as we leave the bridge
+      scrub: true,
+onUpdate(self){
+  const eased = gsap.parseEase("power2.out")(self.progress);
+  setBridgeAlpha(eased);
+},
+
+onEnter(){ setBridgeAlpha(0); },
+onEnterBack(){ setBridgeAlpha(1); },
+onLeave(){ setBridgeAlpha(1); },
+onLeaveBack(){ setBridgeAlpha(0); }    // at top: blackout 1
+    }
+  });
+})();
