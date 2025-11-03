@@ -362,37 +362,77 @@
     }
   }
 
+  // --- cursor velocity tracker (local to litter canvas)
+let __mx = -1, __my = -1, __mt = 0;
+let __mvx = 0, __mvy = 0;
+let __mouseDown = false;
+
+function __updateMouseVelocity(x, y, t) {
+  if (__mt) {
+    const dt = Math.max(1, t - __mt);          // ms
+    __mvx = (x - __mx) / dt * 16.67;           // px/frame-ish
+    __mvy = (y - __my) / dt * 16.67;
+  }
+  __mx = x; __my = y; __mt = t;
+}
+
   function handleHoverMove(e) {
-    const rect = canvas.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
+  const rect = canvas.getBoundingClientRect();
+  const x = e.clientX - rect.left;
+  const y = e.clientY - rect.top;
 
-    const influenceRadius = 160;
-    const impulseStrength = 0.25;
+  // track mouse speed
+  __updateMouseVelocity(x, y, e.timeStamp || performance.now());
 
-    for (let i = 0; i < parts.length; i++) {
-      const p = parts[i];
-      const dx = p.x - x;
-      const dy = p.y - y;
-      const d2 = dx*dx + dy*dy;
-      if (d2 < influenceRadius * influenceRadius) {
-        const falloff = 1 - Math.sqrt(d2) / influenceRadius;
-        p.settled = false;
-        const mult = (p.phys?.cursor ?? 1.0);
-        p.vx  += dx * impulseStrength * falloff * -0.03 * mult;
-        p.vy  += dy * impulseStrength * falloff * -0.03 * mult;
+  // Base feel (tuned for your litter mass)
+  const baseR = 140;           // influence radius
+  const baseK = 0.22;          // impulse strength
 
-        // ↓ reduced hover spin impulse so nothing re-ignites too fast
-        p.spin += (Math.random() - 0.5) * 0.012 * (p.phys?.spin ?? 1.0);
-      }
+  // “Grab/drag” feel when holding the mouse/touch
+  const influenceRadius = __mouseDown ? baseR * 1.6 : baseR;
+  const impulseStrength = __mouseDown ? baseK * 1.8 : baseK;
+
+  // Directional shove along the cursor’s motion
+  const pushX = __mvx * 0.35;
+  const pushY = __mvy * 0.35;
+
+  const r2 = influenceRadius * influenceRadius;
+
+  for (let i = 0; i < parts.length; i++) {
+    const p = parts[i];
+    const dx = p.x - x;
+    const dy = p.y - y;
+    const d2 = dx*dx + dy*dy;
+    if (d2 < r2) {
+      const falloff = 1 - Math.sqrt(d2) / influenceRadius;
+
+      // wake item
+      p.settled = false;
+
+      const mult  = (p.phys?.cursor ?? 1.0);
+      const spinM = (p.phys?.spin   ?? 1.0);
+
+      // Combine gentle radial pull with strong directional push
+      p.vx += (dx * -0.015 + pushX) * impulseStrength * falloff * mult;
+      p.vy += (dy * -0.015 + pushY) * impulseStrength * falloff * mult;
+
+      // tiny spin variation
+      p.spin += (Math.random() - 0.5) * 0.02 * spinM;
     }
   }
+}
 
-  function enableLitterDrag() {
-    canvas.addEventListener("mousemove", handleHoverMove);
-    canvas.addEventListener("mousemove", updateCanvasCursorForLamp);
-    canvas.addEventListener("click", handleCanvasClick);
-  }
+
+ function enableLitterDrag() {
+  // Prefer pointer events for mouse/touch/pen
+  canvas.addEventListener("pointermove", handleHoverMove, { passive: true });
+  canvas.addEventListener("pointermove", updateCanvasCursorForLamp, { passive: true });
+  canvas.addEventListener("click", handleCanvasClick);
+
+  // Track "grab" state (feels more controllable)
+  canvas.addEventListener("pointerdown", () => { __mouseDown = true; });
+  window.addEventListener("pointerup",   () => { __mouseDown = false; });
+}
 
   function loop() {
     if (!(ctx && canvas)) return requestAnimationFrame(loop);
