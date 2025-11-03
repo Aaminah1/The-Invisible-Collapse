@@ -128,6 +128,14 @@
     let LAMP_RECTS = [];
     let groundY = null;
     const parts = [];
+// --- breath-driven wind controls for litter ---
+let __LITTER_WIND_X = 0;      // continuous side push from mic (pixels per frame-ish)
+let __LITTER_LIFT   = 0;      // small upward lift from strong breath
+let __LITTER_GUST   = 0;      // short-lived burst impulse
+
+// external setters (mic-wind.js will call these)
+window.__litterSetWind  = (wx = 0, lift = 0) => { __LITTER_WIND_X = +wx || 0; __LITTER_LIFT = +lift || 0; };
+window.__litterBurst    = (power = 1) => { __LITTER_GUST = Math.max(__LITTER_GUST, +power || 0); };
 
     const SPRITE_BANK = { 0: [], 1: [], 2: [], default: [] };
     const rand = (a, b) => a + Math.random() * (b - a);
@@ -353,6 +361,33 @@
           p.x   += p.vx;
           p.y   += p.vy;
           p.rot += p.spin;
+// ---- breath wind coupling ----
+const WIND_PUSH = __LITTER_WIND_X;    // ~ 0..0.6 typical from mic mapping
+const LIFT_PUSH = __LITTER_LIFT;      // tiny upward pull on strong breath
+
+// continuous push (scale by how “sail-like” the item is)
+const sail = (phys?.turb ?? 0.6) * 0.65 + (phys?.lift ?? 0.01) * 10;
+p.vx += WIND_PUSH * sail * 0.12;
+
+// a little lift if breathing is strong
+p.vy -= Math.abs(WIND_PUSH) * 0.02 * (phys?.lift ?? 0.01) * 11;
+p.vy -= LIFT_PUSH * 0.015;
+
+// short gust impulse
+if (__LITTER_GUST > 0) {
+  const g = __LITTER_GUST;
+  // kick mostly sideways, slight upward flick; lighter items get more
+  const light = 1.0 / Math.max(0.6, (phys?.g ?? 0.9));
+  p.vx += (WIND_PUSH >= 0 ? 1 : -1) * 0.45 * g * light * (0.8 + Math.random()*0.4);
+  p.vy -= 0.10 * g * light * (0.8 + Math.random()*0.4);
+
+  // un-settle some pieces so they start sliding again
+  if (p.settled && Math.random() < Math.min(0.65, 0.25 + g*0.5)) {
+    p.settled = false;
+    p.vx *= 0.9; // small roll-start
+  }
+}
+// gust decays naturally each frame
 
           if (groundY != null) {
             const bottom = p.y + (p.h * 0.5);
@@ -363,6 +398,13 @@
               p.spin *= phys.impact * 0.9;
               p.settled = true;
             }
+            // if wind is strong, make settled items creep/slide a bit
+const windSlide = Math.abs(WIND_PUSH);
+if (windSlide > 0.25) {
+  p.vx += Math.sign(WIND_PUSH) * (windSlide - 0.22) * 0.05 * (phys?.groundFriction ? (1.05 - phys.groundFriction) : 0.08);
+  if (Math.abs(p.vx) > 0.02) p.settled = false;
+}
+
           }
         } else {
           p.x   += p.vx;
@@ -399,7 +441,7 @@
         }
         ctx.restore();
       }
-
+__LITTER_GUST *= 0.86;
       requestAnimationFrame(loop);
     }
 

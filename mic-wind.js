@@ -144,62 +144,78 @@ function explainGetUserMediaError(err) {
     window.__breathFast__ = lerp(window.__breathFast__, strengthRaw,
                                  strengthRaw > window.__breathFast__ ? gustAttack : gustDecay);
 
-    // Meter shows slow envelope
-    meterSet(window.__breathEnv__);
+    // Convenience locals (avoid undefineds)
+    const breathEnv  = (window.__breathEnv__  || 0);
+    const breathFast = (window.__breathFast__ || 0);
+
+    // === Burst detection (CALCULATE FIRST, use later) ===
+    if (!window.__breathPrev__) window.__breathPrev__ = 0;
+    const delta   = breathEnv - window.__breathPrev__;
+    window.__breathPrev__ = breathEnv;
+
+    const gust    = Math.max(0, breathFast - breathEnv * 0.7);  // “pop” above slow env
+    const isBurst = delta > 0.10 || breathFast > 0.65;
+
+    // UI meter shows slow envelope
+    try { meterSet(breathEnv); } catch {}
 
     // Optional wind sound ambience
     const baseAmbience = 0.10;
     const breathBoost  = 0.95;
-    setWindVolume(baseAmbience + window.__breathEnv__ * breathBoost);
+    setWindVolume(baseAmbience + breathEnv * breathBoost);
 
     // Horizontal wind push for the world (used by trees/particles)
-    const maxA = 0.55;                 // feel free to tweak
-    const windX = maxA * window.__breathEnv__;
+    const maxA  = 0.55;                  // master amplitude
+    const windX = maxA * breathEnv;
     window.__WIND__.x = lerp(window.__WIND__.x || 0, windX, 0.65);
-// ===== MIC → SMOKE COUPLING =====
-// 1) Push the horizontal wind harder so it’s obvious
-const smokeWind = windX * 8.0;              // 6–10 is very noticeable
-window.__smokeSetWind && window.__smokeSetWind(smokeWind);
 
-// 2) Continuous boost based on slow env + fast gust
-const boost = {
-  mult:   1.0 + (window.__breathEnv__  || 0) * 1.8 + (Math.max(0, (window.__breathFast__||0) - (window.__breathEnv__||0)*0.7)) * 0.8,
-  speed:  1.0 + (window.__breathEnv__  || 0) * 1.3,
-  lift:   1.0 + (window.__breathEnv__  || 0) * 0.9,
-  size:   1.0 + (window.__breathEnv__  || 0) * 0.35,
-  wind:   1.0 + (window.__breathEnv__  || 0) * 1.2,
-  alpha:  Math.min(0.9, 0.20 + (window.__breathEnv__ || 0) * 0.6),
-  height: Math.min(0.82, 0.30 + (window.__breathEnv__ || 0) * 0.45)
-};
-window.__smokeSetBoost && window.__smokeSetBoost(boost);
+    // ---- LITTER: continuous wind + a little lift
+    const litterWind = windX * 1.8;                    // gentle but visible
+    const litterLift = Math.max(0, breathEnv - 0.25);  // lift only on stronger breath
+    window.__litterSetWind && window.__litterSetWind(litterWind, litterLift);
 
-// 3) One-shot burst on sharp onset
-if (!window.__breathPrev__) window.__breathPrev__ = 0;
-const delta = (window.__breathEnv__||0) - window.__breathPrev__;
-window.__breathPrev__ = (window.__breathEnv__||0);
-const isBurst = delta > 0.10 || (window.__breathFast__||0) > 0.65;
+    // ---- SMOKE: stronger mapping so it’s obvious
+    const smokeWind = windX * 8.0;                     // bold drift
+    window.__smokeSetWind && window.__smokeSetWind(smokeWind);
 
-if (isBurst && window.__smokeSetBoost) {
-  const burst = { mult:1.8, speed:1.4, spread:1.2, wind:1.3, alpha:0.15, lift:1.1 };
-  window.__smokeSetBoost(burst);
-  setTimeout(() => window.__smokeSetBoost && window.__smokeSetBoost(boost), 180);
-}
+    // Continuous smoke boost based on envelopes
+    const boost = {
+      mult:   1.0 + breathEnv * 1.8 + Math.max(0, (breathFast - breathEnv * 0.7)) * 0.8,
+      speed:  1.0 + breathEnv * 1.3,
+      lift:   1.0 + breathEnv * 0.9,
+      size:   1.0 + breathEnv * 0.35,
+      wind:   1.0 + breathEnv * 1.2,
+      alpha:  Math.min(0.9, 0.20 + breathEnv * 0.6),
+      height: Math.min(0.82, 0.30 + breathEnv * 0.45)
+    };
+    window.__smokeSetBoost && window.__smokeSetBoost(boost);
+
+    // One-shot bursts for litter & smoke on sharp onset
+    if (isBurst) {
+      const burstPower = 0.9 + (gust * 0.8); // 0.9..1.7 typical
+      window.__litterBurst && window.__litterBurst(burstPower);
+
+      if (window.__smokeSetBoost) {
+        const burst = { mult:1.8, speed:1.4, spread:1.2, wind:1.3, alpha:0.15, lift:1.1 };
+        window.__smokeSetBoost(burst);
+        setTimeout(() => window.__smokeSetBoost && window.__smokeSetBoost(boost), 180);
+      }
+    }
 
     // Slow, obvious tree sway tied to breath (phasey)
     if (window.__treesMicSway__) {
       const amp  = 1.9;                // exaggeration for visibility
       const baseHz = 0.35, addHz = 0.45;
-      const hz = baseHz + addHz * window.__breathEnv__;
+      const hz = baseHz + addHz * breathEnv;
       window.__breathPhase__ += hz * (1/60);      // ~per-frame increment
       const phase = Math.sin(window.__breathPhase__ * Math.PI * 2);
-      const sway = (0.5 + 0.5 * phase) * window.__breathEnv__ * amp;
+      const sway = (0.5 + 0.5 * phase) * breathEnv * amp;
       window.__treesMicSway__(sway);
     }
 
     // Kick ALL leaves with env + gust
     if (window.__leavesMicResponse__) {
-      const gust = Math.max(0, window.__breathFast__ - (window.__breathEnv__ * 0.7));
-      const leafStrength = clamp01(window.__breathEnv__ * 1.2 + gust * 1.8);
+      const leafStrength = clamp01(breathEnv * 1.2 + gust * 1.8);
       window.__leavesMicResponse__(leafStrength);
     }
 
@@ -214,9 +230,15 @@ if (isBurst && window.__smokeSetBoost) {
       rafId = 0;
       try { ctx && ctx.close && ctx.state !== "closed" && await ctx.close(); } catch(e){}
       ctx = analyser = source = null;
-      // settle world
+
+      // settle world (moved ABOVE return so it actually runs)
+      try { window.meterSet && window.meterSet(0); } catch {}
       if (window.__WIND__) window.__WIND__.x = 0;
       setWindVolume(0);
+      window.__litterSetWind && window.__litterSetWind(0, 0);
+      window.__smokeSetWind  && window.__smokeSetWind(0);
+      window.__smokeSetBoost && window.__smokeSetBoost(null);
+
       btn && (btn.textContent = "🌬️ Enable Mic Wind");
       return;
     }
@@ -283,5 +305,5 @@ if (isBurst && window.__smokeSetBoost) {
   window.__micWind__ = { enable: () => {
     const btn = document.getElementById("micWindBtn");
     return enableMic(btn);
-  }};
+  }};  
 })();
