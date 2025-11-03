@@ -61,6 +61,17 @@ const EXTRA_TAIL_PX = 8400;     // runway just for the tractor
 
 
 /* ---------- helpers ---------- */
+function ensureTreesVisibleOnce() {
+  if (window.__treesMadeVisibleOnce__) return;
+  gsap.set("#forestReveal .tree, #forestReveal .tree-back", {
+    opacity: 1,
+    clipPath: "inset(0% 0 0 0)"
+  });
+  // Force stage 0 so the Full tree shows immediately
+  if (typeof setStageProgress === "function") setStageProgress(0);
+  window.__treesMadeVisibleOnce__ = true;
+}
+
 const clamp = (min, v, max) => Math.max(min, Math.min(max, v));
 const clampSpin = (v, max) => Math.max(-max, Math.min(max, v)); // unified
 const vh    = pct => (window.innerHeight * pct) / 100;
@@ -3545,6 +3556,7 @@ ScrollTrigger.create({
   scrub: true,
 
   onUpdate(self){
+       ensureTreesVisibleOnce(); 
     // p = 0..1 across the whole pinned range (forest + tail)
     const p = self.progress;
 
