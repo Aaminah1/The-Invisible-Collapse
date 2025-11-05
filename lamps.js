@@ -1315,8 +1315,8 @@ function renderSoot(ctx, W, H){
     ];
 
     setLampConfig("#lampsScene", LANTERN_CFG);
-    __setLampsOn(false);
-    __applyLampIntensity(0); // start dark
+   __setLampsOn(true, { noFlicker:true }); // lantern lit on arrival
+   __applyLampIntensity(1); 
 
     window.__refreshLampGroundLine?.();
     window.__refreshLampLitterRects?.();
@@ -1385,12 +1385,13 @@ function renderSoot(ctx, W, H){
         window.__smokeSetScene?.(artScene);
         window.__smokeSetWind?.((LT.wind ?? 0)*0.02);
 
-        if (sceneIdx >= 1 && window.__lampsUserOverride == null) {
-          if (!window.__lampsOn) __setLampsOn(true, { noFlicker:true });
-        }
-        if (sceneIdx === 0 && window.__lampsUserOverride == null) {
-          if (window.__lampsOn) __setLampsOn(false, { noFlicker:true });
-        }
+      if (window.__lampsUserOverride == null) {
+   // Auto-ON for scenes 0,1,2 (lantern + streetlights); blackout scene (3) handled below
+   const shouldBeOn = (sceneIdx <= 2);
+   if (shouldBeOn !== window.__lampsOn) {
+     __setLampsOn(shouldBeOn, { noFlicker:true });
+   }
+ }
 
         // Degradation & intensity program + BLACKOUT LATCH BEHAVIOR
         if (sceneIdx === 1){
