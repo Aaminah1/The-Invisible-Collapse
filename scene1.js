@@ -188,20 +188,24 @@
         startParticles();
 
         setTimeout(() => {
-          const words = subTextEl.textContent.split(" ");
-          subTextEl.innerHTML = "";
-          subTextEl.classList.remove("hidden");
-          words.forEach((w,i) => {
-            const span = document.createElement("span");
-            span.textContent = w;
-            span.style.cssText = "opacity:0;transform:translateY(10px);display:inline-block;margin-right:6px;transition:opacity 1s ease-out,transform 1s ease-out;";
-            subTextEl.appendChild(span);
-            setTimeout(() => {
-              span.style.opacity = 1;
-              span.style.transform = "translateY(0)";
-            }, i * SPEED.WORD_STAGGER);
-          });
-        }, SPEED.SUBTEXT_DELAY);
+  const original = subTextEl.textContent;
+  const words = original.trim().split(/\s+/);
+  subTextEl.innerHTML = "";
+  subTextEl.classList.remove("hidden");
+  words.forEach((w,i) => {
+    const span = document.createElement("span");
+    span.textContent = w;
+    span.style.cssText =
+      "opacity:0;transform:translateY(10px);display:inline-block;" +
+      "transition:opacity .9s ease-out,transform .9s ease-out;";
+    subTextEl.appendChild(span);
+    if (i < words.length - 1) subTextEl.appendChild(document.createTextNode(" "));
+    setTimeout(() => {
+      span.style.opacity = 1;
+      span.style.transform = "translateY(0)";
+    }, i * 160); // WORD_STAGGER stays 160
+  });
+}, 800); 
       }, SPEED.DOT_DELAY);
 
       // NOTE: we no longer show the scroll hint here.

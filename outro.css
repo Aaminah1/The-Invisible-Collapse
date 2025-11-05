@@ -16,15 +16,15 @@
 }
 
 #outroMainLine{
-  display: flex;
-  align-items: center;
-  gap: 2px;                /* matches intro headline spacing */
-  font-size: 3rem;
-  letter-spacing: 1.5px;
-  line-height: 1.02;       /* tighter line box like your intro */
-  z-index: 3;
-  margin: 0;
-}
+   display:flex;
+   align-items:center;
+   gap: var(--hl-gap);
+   font-size: var(--hl-size);
+   letter-spacing: var(--hl-letter);
+   line-height: 1.02;
+  z-index:3;
+   margin:0;
+ }
 
 #outroMainText,
 #outroDot{
@@ -35,13 +35,14 @@
 }
 
 #outroSubText{
-  /* Bring the subline closer to the title (was 10px) */
-  margin-top: 0px;
-  font-size: 1.2rem;
-  line-height: 1.15;       /* slightly tighter like scene 1 */
-  opacity: 1;
-  z-index: 3;
-}
+   margin-top:0;
+  font-size: var(--sub-size);
+   line-height: var(--sub-line);
+   letter-spacing: var(--sub-letter);
+   word-spacing: var(--sub-word);
+   opacity:1;
+   z-index:3;
+ }
 
 /* keep layout space but hide visually until reveal (same pattern as scene 1) */
 #outroSubText.hidden{
@@ -182,3 +183,9 @@
 /* tiny nudge to avoid sub-pixel hairlines on some devices */
 #outro { transform: translateZ(0); }
 #bridgeFade { transform: translateZ(0); }
+/* Force normal cursor on bridge + outro */
+#bridgeFade, #outro { cursor: default !important; }
+
+/* When we’re in bridge/outro, make sure cityHit can’t reassert itself */
+body.in-bridge #cityHit,
+body.in-outro  #cityHit { display: none !important; cursor: default !important; }

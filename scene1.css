@@ -1,3 +1,18 @@
+:root{
+  /* Headline */
+  --hl-size: 3rem;
+  --hl-letter: 1.5px;
+  --hl-gap: 4px;        /* <- pick 2px to match both */
+
+  /* Subline */
+  --sub-size: 1.2rem;
+  --sub-letter: 0.02em; /* subtle tracking */
+  --sub-word:   0.15ch; /* clean word gaps */
+  --sub-line:   1.15;
+}
+
+
+
 /* scene1.css */
 #landing{
   position:relative;
@@ -14,13 +29,13 @@
 }
 
 #mainLine{
-  display:flex;
-  align-items:center;
-  gap:4px;
-  font-size:3rem;
-  letter-spacing:1.5px;
+   display:flex;
+   align-items:center;
+   gap: var(--hl-gap);
+   font-size: var(--hl-size);
+   letter-spacing: var(--hl-letter);
    z-index:3;
-}
+ }
 
 #mainText,#dot{
   opacity:0;
@@ -30,10 +45,13 @@
 }
 
 #subText{
-  font-size:1.2rem;
-  margin-top:0px;
-  z-index:3;
-}
+   font-size: var(--sub-size);
+   line-height: var(--sub-line);
+   letter-spacing: var(--sub-letter);
+   word-spacing: var(--sub-word);
+   margin-top:0;
+   z-index:3;
+ }
 
 /* keep layout space but hide visually until reveal */
 #subText.hidden{
