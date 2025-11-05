@@ -36,23 +36,38 @@
   transform: scale(var(--btnScale, 1));  /* hover/press writes this */
   position: relative; overflow:hidden;
 }
-
-/* Warmer when ON (JS toggles data-on) */
-#micWindBtn[data-on="1"] .micInner{
-  background: var(--mic-on-bg);
-  box-shadow: var(--mic-glow-hot);
-  filter: hue-rotate(var(--mic-warm)) saturate(110%);
+/* subtle grey wash layer (off by default) */
+#micWindBtn .micInner::before{
+  content:"";
+  position:absolute; inset:0;
+  background: linear-gradient(
+    to bottom,
+    rgba(220,225,232,.12),
+    rgba(200,206,214,.16)
+  );
+  mix-blend-mode: screen;          /* keeps it airy, not muddy */
+  opacity:0; pointer-events:none;
+  transition: opacity .18s ease;
 }
-
-/* Cooler when OFF */
-#micWindBtn:not([data-on="1"]) .micInner{
-  filter: hue-rotate(var(--mic-cool)) saturate(100%);
+/* OFF → hover: cooler, greyer, slightly dim */
+#micWindBtn:not([data-on="1"]):hover .micInner{
+  --btnScale: .989;
+  box-shadow: 0 8px 28px rgba(0,0,0,.28);
+  filter: hue-rotate(200deg) saturate(75%) brightness(0.96) contrast(0.94);
 }
+#micWindBtn:not([data-on="1"]):hover .micInner::before{ opacity:.55; }
 
-/* Hover = inhale/hold (scale inner only) */
-#micWindBtn:hover .micInner{ --btnScale: .989; box-shadow: 0 8px 28px rgba(0,0,0,.28); }
-/* Press = compress */
-#micWindBtn:active .micInner{ --btnScale: .975; }
+/* ON → hover: still a touch warm, but washed + dimmed */
+#micWindBtn[data-on="1"]:hover .micInner{
+  --btnScale: .989;
+  box-shadow: 0 8px 28px rgba(0,0,0,.28);
+  filter: hue-rotate(12deg) saturate(80%) brightness(0.96) contrast(0.94);
+}
+#micWindBtn[data-on="1"]:hover .micInner::before{ opacity:.48; }
+
+/* Press stays a bit deeper (no change needed if you like current feel) */
+#micWindBtn:active .micInner{ --btnScale: .982; }
+
 
 /* Exhale pulse ring on inner (JS toggles .exhale on outer) */
 #micWindBtn .micInner::after{

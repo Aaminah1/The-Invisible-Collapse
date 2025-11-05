@@ -24,6 +24,7 @@
    line-height: 1.02;
   z-index:3;
    margin:0;
+     cursor: pointer ;
  }
 
 #outroMainText,
@@ -189,3 +190,21 @@
 /* When we’re in bridge/outro, make sure cityHit can’t reassert itself */
 body.in-bridge #cityHit,
 body.in-outro  #cityHit { display: none !important; cursor: default !important; }
+/* ===== Outro cracks overlay ===== */
+:root{
+  /* match your ink / particle tint (same as your text color now) */
+  --scratch-color: #4b4a4a;
+}
+
+#outroCracks{
+  position: fixed;       /* you chose fixed */
+  inset: 0;
+  width: 100vw;          /* important: give it a box size */
+  height: 100vh;         /* important: give it a box size */
+  pointer-events: none;
+  z-index: 2;            /* below text (z=3) */
+}
+
+@media (prefers-reduced-motion: reduce){
+  #outroCracks{ display:none; }
+}
