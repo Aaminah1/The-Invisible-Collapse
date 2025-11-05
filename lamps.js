@@ -30,20 +30,20 @@
   ];
 
   const NEAR_SRC = [
-    "images/city1.png",
-    "images/city3.png",
-    "images/city4.png",
-    "images/city4.png",
+    "images/city11.png",
+    "images/city31.png",
+    "images/city41.png",
+    "images/city41.png",
   ];
 
   const FAR_SRC = [
-    "images/cityfar_1.png",
-    "images/cityfar_3.png",
-    "images/cityfar_4.png",
-    "images/cityfar_4.png"
+    "images/cityfar_11.png",
+    "images/cityfar_22.png",
+    "images/cityfar_44.png",
+    "images/cityfar_44.png"
   ];
 
-  const NEAR_REF = "images/constructioncity_near.png";
+  const NEAR_REF = "images/constructioncityy_near.png";
 
   /* Track whether the user has explicitly chosen a state via click.
      null = no override (allow scene logic), 'on' | 'off' = respect user choice. */

@@ -1,4 +1,6 @@
-// mic-wind.js  — CLEAN, REVERTED: breath → trees + leaves only (no smoke hooks)
+// mic-wind.js — Mic stays visible across site except Intro/Bridges/Outro.
+// Slides IN after Intro, stays ON across Forest/Lamps/City, slides OUT at #bridge, #bridgeFade, #outro.
+// Also auto-disables when hidden (privacy), but never auto-toggles between allowed sections.
 
 /* ===================== Debug meter (bottom-left) ===================== */
 (() => {
@@ -42,7 +44,7 @@ async function loadWindAudio(url = "sounds/whoosh_soft.mp3") {
 function setWindVolume(v){
   if (!windReady || !windACtx || !windGain) return;
   const now = windACtx.currentTime;
-  const t = 0.08; // short ramp to avoid clicks
+  const t = 0.08;
   windGain.gain.cancelScheduledValues(now);
   windGain.gain.linearRampToValueAtTime(Math.max(0, Math.min(1, v)), now + t);
 }
@@ -55,8 +57,6 @@ async function preflightMic() {
   if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
     throw new Error("MediaDevices or getUserMedia is unavailable in this browser/context.");
   }
-
-  // Best-effort permissions hint
   try {
     if (navigator.permissions && navigator.permissions.query) {
       const st = await navigator.permissions.query({ name: "microphone" });
@@ -64,47 +64,39 @@ async function preflightMic() {
         throw new Error("Microphone permission is blocked. Click the padlock → Site settings → Allow Microphone, then reload.");
       }
     }
-  } catch { /* ignore */ }
-
-  // Enumerate to detect mics (may still be empty before first prompt on some browsers)
+  } catch {}
   try {
     const devs = await navigator.mediaDevices.enumerateDevices();
     const hasMic = devs.some(d => d.kind === "audioinput");
-    if (!hasMic) console.warn("No audioinput devices visible (this can change after the first permission prompt).");
-  } catch { /* ignore */ }
+    if (!hasMic) console.warn("No audioinput devices visible (can change after first prompt).");
+  } catch {}
 }
 
 function explainGetUserMediaError(err) {
   const name = (err && (err.name || err.code)) || "Error";
-  if (name === "NotAllowedError" || name === "PermissionDeniedError") {
-    return "Mic access was denied. Use the padlock → Site settings → Microphone → Allow, then reload.";
-  }
-  if (name === "NotFoundError" || name === "DevicesNotFoundError") {
-    return "No microphone was found. Plug one in or enable it in OS settings.";
-  }
-  if (name === "NotReadableError" || name === "TrackStartError") {
-    return "The microphone is busy or unavailable. Close other apps using the mic and try again.";
-  }
-  if (name === "OverconstrainedError" || name === "ConstraintNotSatisfiedError") {
-    return "The requested audio constraints aren’t supported by this device.";
-  }
-  if (name === "SecurityError") {
-    return "Blocked by browser security policy. Ensure HTTPS/localhost and allow mic.";
-  }
+  if (name === "NotAllowedError" || name === "PermissionDeniedError") return "Mic access was denied. Allow mic in Site settings, then reload.";
+  if (name === "NotFoundError" || name === "DevicesNotFoundError")   return "No microphone was found. Plug one in or enable it in OS settings.";
+  if (name === "NotReadableError" || name === "TrackStartError")     return "The microphone is busy/unavailable. Close other apps using the mic.";
+  if (name === "OverconstrainedError" || name === "ConstraintNotSatisfiedError") return "Requested audio constraints aren’t supported.";
+  if (name === "SecurityError") return "Blocked by browser security policy. Ensure HTTPS/localhost and allow mic.";
   return (err && err.message) ? err.message : "Unknown microphone error.";
 }
 
 /* ===================== Main mic logic (trees + leaves only) ===================== */
 (() => {
   let ctx, analyser, source, rafId = 0, enabled = false;
+  let micStream = null;
   let baseline = 0.00;
   const data = new Float32Array(2048);
 
   // shared breath state (read by other scripts if needed)
-  if (window.__breathEnv__   == null) window.__breathEnv__   = 0;  // slow envelope
-  if (window.__breathFast__  == null) window.__breathFast__  = 0;  // fast gusts
-  if (window.__breathPhase__ == null) window.__breathPhase__ = 0;  // tiny osc
-  if (window.__WIND__        == null) window.__WIND__        = { x:0 }; // global wind field
+  if (window.__breathEnv__   == null) window.__breathEnv__   = 0;
+  if (window.__breathFast__  == null) window.__breathFast__  = 0;
+  if (window.__breathPhase__ == null) window.__breathPhase__ = 0;
+  if (window.__WIND__        == null) window.__WIND__        = { x:0 };
+
+  // public on/off state
+  window.__micWindState__ = { isOn:false };
 
   const clamp01 = v => Math.max(0, Math.min(1, v));
   const lerp    = (a,b,t) => a + (b-a)*t;
@@ -125,76 +117,57 @@ function explainGetUserMediaError(err) {
     }
     rms = Math.sqrt(rms / data.length);
 
-    // Adaptive baseline (slightly quicker so small breaths register)
+    // Adaptive baseline
     baseline = lerp(baseline, rms, 0.03);
 
-    // Net above baseline → sensitivity
+    // Sensitivity
     let net = rms - baseline * 1.02;
     if (net < 0) net = 0;
-
-    // Smaller divisor = more sensitive (0.022–0.028 typical)
     const strengthRaw = clamp01(net / 0.024);
 
-    // Two envelopes: slow env (trees) and fast gust (leaves)
+    // Envelopes
     const envAttack  = 0.55, envDecay  = 0.20;
     const gustAttack = 0.85, gustDecay = 0.35;
+    window.__breathEnv__  = lerp(window.__breathEnv__,  strengthRaw, strengthRaw > window.__breathEnv__  ? envAttack  : envDecay);
+    window.__breathFast__ = lerp(window.__breathFast__, strengthRaw, strengthRaw > window.__breathFast__ ? gustAttack : gustDecay);
 
-    window.__breathEnv__  = lerp(window.__breathEnv__,  strengthRaw,
-                                 strengthRaw > window.__breathEnv__  ? envAttack  : envDecay);
-    window.__breathFast__ = lerp(window.__breathFast__, strengthRaw,
-                                 strengthRaw > window.__breathFast__ ? gustAttack : gustDecay);
-
-    // Convenience locals (avoid undefineds)
     const breathEnv  = (window.__breathEnv__  || 0);
     const breathFast = (window.__breathFast__ || 0);
 
-    // === Burst detection (CALCULATE FIRST, use later) ===
+    // Burst detection
     if (!window.__breathPrev__) window.__breathPrev__ = 0;
     const delta   = breathEnv - window.__breathPrev__;
     window.__breathPrev__ = breathEnv;
-
-    const gust    = Math.max(0, breathFast - breathEnv * 0.7);  // “pop” above slow env
+    const gust = Math.max(0, breathFast - breathEnv * 0.7);
     const isBurst = delta > 0.10 || breathFast > 0.65;
 
-    // UI meter shows slow envelope
+    // UI meter
     try { meterSet(breathEnv); } catch {}
 
-    // Optional wind sound ambience
-    const baseAmbience = 0.10;
-    const breathBoost  = 0.95;
-    setWindVolume(baseAmbience + breathEnv * breathBoost);
+    // Ambient sound
+    setWindVolume(0.10 + breathEnv * 0.95);
 
-    // Horizontal wind push for the world (used by trees/particles)
-    const maxA  = 0.55;                  // master amplitude
-    const windX = maxA * breathEnv;
+    // Global wind push
+    const windX = 0.55 * breathEnv;
     window.__WIND__.x = lerp(window.__WIND__.x || 0, windX, 0.65);
 
-    // ---- LITTER: continuous wind + a little lift
-    const litterWind = windX * 1.8;                    // gentle but visible
-    const litterLift = Math.max(0, breathEnv - 0.25);  // lift only on stronger breath
-    window.__litterSetWind && window.__litterSetWind(litterWind, litterLift);
+    // Litter / Smoke hooks (safe if not present)
+    window.__litterSetWind && window.__litterSetWind(windX * 1.8, Math.max(0, breathEnv - 0.25));
+    window.__smokeSetWind  && window.__smokeSetWind(windX * 8.0);
 
-    // ---- SMOKE: stronger mapping so it’s obvious
-    const smokeWind = windX * 8.0;                     // bold drift
-    window.__smokeSetWind && window.__smokeSetWind(smokeWind);
-
-    // Continuous smoke boost based on envelopes
     const boost = {
-      mult:   1.0 + breathEnv * 1.8 + Math.max(0, (breathFast - breathEnv * 0.7)) * 0.8,
-      speed:  1.0 + breathEnv * 1.3,
-      lift:   1.0 + breathEnv * 0.9,
-      size:   1.0 + breathEnv * 0.35,
-      wind:   1.0 + breathEnv * 1.2,
-      alpha:  Math.min(0.9, 0.20 + breathEnv * 0.6),
-      height: Math.min(0.82, 0.30 + breathEnv * 0.45)
+      mult: 1.0 + breathEnv * 1.8 + Math.max(0, (breathFast - breathEnv * 0.7)) * 0.8,
+      speed: 1.0 + breathEnv * 1.3,
+      lift:  1.0 + breathEnv * 0.9,
+      size:  1.0 + breathEnv * 0.35,
+      wind:  1.0 + breathEnv * 1.2,
+      alpha: Math.min(0.9, 0.20 + breathEnv * 0.6),
+      height:Math.min(0.82, 0.30 + breathEnv * 0.45)
     };
     window.__smokeSetBoost && window.__smokeSetBoost(boost);
 
-    // One-shot bursts for litter & smoke on sharp onset
     if (isBurst) {
-      const burstPower = 0.9 + (gust * 0.8); // 0.9..1.7 typical
-      window.__litterBurst && window.__litterBurst(burstPower);
-
+      window.__litterBurst && window.__litterBurst(0.9 + (Math.max(0, breathFast - breathEnv * 0.7) * 0.8));
       if (window.__smokeSetBoost) {
         const burst = { mult:1.8, speed:1.4, spread:1.2, wind:1.3, alpha:0.15, lift:1.1 };
         window.__smokeSetBoost(burst);
@@ -202,20 +175,15 @@ function explainGetUserMediaError(err) {
       }
     }
 
-    // Slow, obvious tree sway tied to breath (phasey)
+    // Trees sway + leaves
     if (window.__treesMicSway__) {
-      const amp  = 1.9;                // exaggeration for visibility
-      const baseHz = 0.35, addHz = 0.45;
-      const hz = baseHz + addHz * breathEnv;
-      window.__breathPhase__ += hz * (1/60);      // ~per-frame increment
+      const hz = 0.35 + 0.45 * breathEnv;
+      window.__breathPhase__ += hz * (1/60);
       const phase = Math.sin(window.__breathPhase__ * Math.PI * 2);
-      const sway = (0.5 + 0.5 * phase) * breathEnv * amp;
-      window.__treesMicSway__(sway);
+      window.__treesMicSway__((0.5 + 0.5 * phase) * breathEnv * 1.9);
     }
-
-    // Kick ALL leaves with env + gust
     if (window.__leavesMicResponse__) {
-      const leafStrength = clamp01(breathEnv * 1.2 + gust * 1.8);
+      const leafStrength = clamp01(breathEnv * 1.2 + (Math.max(0, breathFast - breathEnv * 0.7)) * 1.8);
       window.__leavesMicResponse__(leafStrength);
     }
 
@@ -226,12 +194,17 @@ function explainGetUserMediaError(err) {
     // Toggle OFF
     if (enabled) {
       enabled = false;
+      window.__micWindState__.isOn = false;
+
       if (rafId) cancelAnimationFrame(rafId);
       rafId = 0;
+
       try { ctx && ctx.close && ctx.state !== "closed" && await ctx.close(); } catch(e){}
       ctx = analyser = source = null;
 
-      // settle world (moved ABOVE return so it actually runs)
+      try { if (micStream) micStream.getTracks().forEach(tr => tr.stop()); } catch {}
+      micStream = null;
+
       try { window.meterSet && window.meterSet(0); } catch {}
       if (window.__WIND__) window.__WIND__.x = 0;
       setWindVolume(0);
@@ -239,7 +212,8 @@ function explainGetUserMediaError(err) {
       window.__smokeSetWind  && window.__smokeSetWind(0);
       window.__smokeSetBoost && window.__smokeSetBoost(null);
 
-      btn && (btn.textContent = "🌬️ Enable Mic Wind");
+      btn && (btn.textContent = "🌬️ Enable mic");
+      try { if (windACtx && windACtx.state === "running") await windACtx.suspend(); } catch {}
       return;
     }
 
@@ -247,41 +221,32 @@ function explainGetUserMediaError(err) {
     try {
       await preflightMic();
 
-      // resume previously created audio context (if any)
-      if (window.windACtx && windACtx.state === "suspended") {
-        await windACtx.resume();
-      }
+      if (window.windACtx && windACtx.state === "suspended") { await windACtx.resume(); }
 
       // request mic
       const constraints = { audio: { echoCancellation:false, noiseSuppression:false, autoGainControl:false } };
-      let stream;
-      try {
-        stream = await navigator.mediaDevices.getUserMedia(constraints);
-      } catch (e) {
-        // Safari/iOS: retry simpler constraint
-        if (e.name === "OverconstrainedError") {
-          stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        } else {
-          throw e;
-        }
+      try { micStream = await navigator.mediaDevices.getUserMedia(constraints); }
+      catch (e) {
+        if (e.name === "OverconstrainedError") micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        else throw e;
       }
 
       // analysis graph
       ctx = new (window.AudioContext || window.webkitAudioContext)();
       if (ctx.state === "suspended") { await ctx.resume(); }
-      source = ctx.createMediaStreamSource(stream);
+      source = ctx.createMediaStreamSource(micStream);
       analyser = ctx.createAnalyser();
       analyser.fftSize = 2048;
       analyser.smoothingTimeConstant = 0.2;
       source.connect(analyser);
 
-      // optional ambience
       await loadWindAudio("sounds/whoosh_soft.mp3");
       if (windACtx && windACtx.state === "suspended") { await windACtx.resume(); }
       setWindVolume(0.06);
 
       enabled = true;
-      btn && (btn.textContent = "🛑 Disable Mic Wind");
+      window.__micWindState__.isOn = true;
+      btn && (btn.textContent = "🛑 Disable Mic");
       analyse();
     } catch (err) {
       console.error("Mic error:", err);
@@ -301,9 +266,134 @@ function explainGetUserMediaError(err) {
     attachButton();
   }
 
-  // tiny helper for console testing
-  window.__micWind__ = { enable: () => {
-    const btn = document.getElementById("micWindBtn");
-    return enableMic(btn);
-  }};  
+  window.__micWind__ = {
+    enable: () => { const btn = document.getElementById("micWindBtn"); return enableMic(btn); },
+    disable: async () => {
+      if (window.__micWindState__?.isOn) {
+        const btn = document.getElementById("micWindBtn");
+        await enableMic(btn); // toggles OFF
+      }
+    },
+    isOn: () => !!window.__micWindState__?.isOn
+  };
+})();
+
+/* ===================== Visibility controller (strict: hide only on Intro/Bridges/Outro) ===================== */
+(() => {
+  const btn = document.getElementById("micWindBtn");
+  if (!btn) return;
+
+  // Start hidden until we pass the intro
+  if (window.gsap) {
+    gsap.set(btn, { xPercent: 120, autoAlpha: 0 });
+  } else {
+    btn.style.transform = 'translateX(120%)';
+    btn.style.opacity = '0';
+  }
+  btn.style.pointerEvents = "none";
+
+  const slideIn  = () => {
+    btn.style.pointerEvents = "auto";
+    if (window.gsap) gsap.to(btn, { xPercent: 0, autoAlpha: 1, duration: 0.45, ease: "power3.out" });
+    else { btn.style.transform='translateX(0)'; btn.style.opacity='1'; }
+  };
+  const slideOut = () => {
+    if (window.gsap) gsap.to(btn, {
+      xPercent: 120, autoAlpha: 0, duration: 0.35, ease: "power2.in",
+      onComplete: () => (btn.style.pointerEvents = "none")
+    });
+    else { btn.style.transform='translateX(120%)'; btn.style.opacity='0'; btn.style.pointerEvents='none'; }
+  };
+
+  // Sections where the mic MUST be hidden
+  const EXCLUDED_SEL = ["#landing", "#bridge", "#bridgeFade", "#outro"];
+  const EXCLUDED = EXCLUDED_SEL.map(s => document.querySelector(s)).filter(Boolean);
+
+  // Track which excluded elements are currently onscreen (≥ 25% visible)
+  const visibleExcluded = new Set();
+  let visible = false;            // current visual state (do we think it's shown?)
+  let forestSeenOnce = false;     // label hint the first time
+
+  function evaluate() {
+    const mustHide = visibleExcluded.size > 0;
+
+    if (mustHide) {
+      if (visible) {
+        // Hide + disable mic so user isn't recorded in excluded areas
+        window.__micWind__?.disable();
+        btn.textContent = "🌬️ Enable mic";
+        slideOut();
+        visible = false;
+      }
+      return;
+    }
+
+    // Allowed area → show
+    if (!visible) {
+      // First time we leave intro into forest, nudge the CTA text
+      const fr = document.querySelector("#forestReveal");
+      if (!forestSeenOnce && fr) {
+        const r = fr.getBoundingClientRect();
+        const inView = r.bottom > 1 && r.top < (window.innerHeight || document.documentElement.clientHeight) - 1;
+        if (inView && !window.__micWind__?.isOn()) {
+          btn.textContent = "🌬️ Enable mic for Forest";
+          forestSeenOnce = true;
+        }
+      }
+      slideIn();
+      visible = true;
+    }
+  }
+
+  // IntersectionObserver is more reliable than multiple triggers with pins/scrub
+  if ('IntersectionObserver' in window) {
+    const io = new IntersectionObserver((entries) => {
+      entries.forEach(e => {
+        const id = e.target.id || e.target.getAttribute('aria-label') || 'excluded';
+        if (e.isIntersecting && e.intersectionRatio >= 0.25) {
+          visibleExcluded.add(id);
+        } else {
+          visibleExcluded.delete(id);
+        }
+      });
+      evaluate();
+    }, {
+      root: null,
+      rootMargin: '0px',
+      threshold: [0, 0.25, 0.5, 0.75, 1]
+    });
+
+    EXCLUDED.forEach(el => io.observe(el));
+
+    // Initial pass (handles deep-linking past the intro)
+    // If none are in view yet, show; else hide/disable.
+    requestAnimationFrame(() => evaluate());
+  } else {
+    // Fallback: simple scroll check if IO isn't available
+    const inView = (el) => {
+      const r = el.getBoundingClientRect();
+      const vh = window.innerHeight || document.documentElement.clientHeight;
+      const vis = Math.max(0, Math.min(r.bottom, vh) - Math.max(r.top, 0));
+      return vis >= vh * 0.25; // ~25% visible
+    };
+    const onScroll = () => {
+      visibleExcluded.clear();
+      EXCLUDED.forEach(el => { if (inView(el)) visibleExcluded.add(el.id); });
+      evaluate();
+    };
+    window.addEventListener('scroll', onScroll, { passive: true });
+    window.addEventListener('resize', onScroll, { passive: true });
+    onScroll();
+  }
+
+  // Keep label synced after user toggles
+  btn.addEventListener("click", () => {
+    setTimeout(() => {
+      if (window.__micWind__?.isOn()) {
+        btn.textContent = "🛑 Disable Mic";
+      } else {
+        btn.textContent = forestSeenOnce ? "🌬️ Enable mic" : "🌬️ Enable mic for Forest";
+      }
+    }, 0);
+  });
 })();

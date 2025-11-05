@@ -40,6 +40,39 @@
     }
   }
 
+  // --- LIGHT HELPERS -------------------------------------------------------
+  function pulseSine(t, speed=1, min=0, max=1){
+    const k = (Math.sin(t*speed)+1)*0.5;
+    return min + (max-min)*k;
+  }
+  // FAA-ish white double-strobe: two quick pops per ~1.1s
+  function strobeDouble(t){
+    const period = 1.1;          // seconds
+    const local = t % period;
+    const on = (x) => x>=0 && x<0.06;   // ~60 ms flash
+    return (on(local) || on(local-0.12)) ? 1 : 0;
+  }
+  // Slow red beacon (top/bottom fuselage) ~ once per second
+  function beaconPulse(t){
+    const p = (t % 1.0);
+    if (p < 0.15) {                // 150 ms on
+      const f = 1 - (p/0.15);
+      return 0.45 + 0.55*f;
+    }
+    return 0;
+  }
+  // Small glow disc
+  function glowDisc(ctx, x, y, r, rgba, alpha=1){
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    const g = ctx.createRadialGradient(x,y,0, x,y,r);
+    g.addColorStop(0, rgba);
+    g.addColorStop(1, 'rgba(255,255,255,0)');
+    ctx.fillStyle = g;
+    ctx.beginPath(); ctx.arc(x,y,r,0,Math.PI*2); ctx.fill();
+    ctx.restore();
+  }
+
   // wiring from lamps scene
   let currentScene=0;    // 0..2
   let sceneProg=0;       // 0..1 inside current scene
@@ -86,6 +119,51 @@
     c.fillRect(0,0,s,s);
     __puffStamp = oc;
     return oc;
+  }
+
+  // --- HOVER / CLICK FX ----------------------------------------------------
+  const HOVER_WOBBLE = { rot: 0.14, bob: 4.0 }; // stronger wobble for visibility
+  const HOVER_GAIN   = 0.035;                   // ramp-up speed
+  const HOVER_DECAY  = 0.90;                    // per-frame decay
+  const CLICK_FLASH_MS = 160;
+
+  // hover halo helper (independent of any prior path)
+  function drawHoverHalo(x, y, r, strength){
+    ctx.save();
+    ctx.globalAlpha = 0.35 * strength;
+    const g = ctx.createRadialGradient(x, y, 0, x, y, r);
+    g.addColorStop(0.0, "rgba(230,240,255,0.85)");
+    g.addColorStop(0.6, "rgba(230,240,255,0.18)");
+    g.addColorStop(1.0, "rgba(230,240,255,0.00)");
+    ctx.fillStyle = g;
+    ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI*2); ctx.fill();
+    ctx.restore();
+  }
+
+  let CLICK_RINGS = [];
+  function spawnClickRing(x,y){
+    CLICK_RINGS.push({ x, y, r: 2, a: 0.85, vr: 240, fade: 0.90 });
+  }
+  function updateClickRings(dt){
+    for (let i=CLICK_RINGS.length-1;i>=0;i--){
+      const k = CLICK_RINGS[i];
+      k.r += k.vr * dt;
+      k.a *= Math.pow(k.fade, (dt*60));
+      if (k.a < 0.04) CLICK_RINGS.splice(i,1);
+    }
+  }
+  function drawClickRings(ctx){
+    ctx.save();
+    ctx.strokeStyle = "rgba(230,240,255,1)";
+    for (let i=0;i<CLICK_RINGS.length;i++){
+      const k = CLICK_RINGS[i];
+      ctx.globalAlpha = Math.max(0, Math.min(1, k.a));
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(k.x, k.y, k.r, 0, Math.PI*2);
+      ctx.stroke();
+    }
+    ctx.restore();
   }
 
   function curl(nx, ny, t){
@@ -185,7 +263,7 @@
     return oc;
   }
 
-  // thin, angled streaks (no orange circles)
+  // thin, angled streaks
   function fallSpawnSpark(a){
     if (FALL_SPARKS.length >= FALL_SPARK_MAX) FALL_SPARKS.shift();
     const dir = Math.sign(a.vx || 1) || (a.dir||1);
@@ -223,7 +301,7 @@
       s.x  += s.vx*dt;    s.y  += s.vy*dt;
       s.life += dt;
       s.a *= 0.982;
-      s.len += 8*dt; // stretch a touch
+      s.len += 8*dt;
 
       if (s.y >= gy){
         s.y = gy;
@@ -258,10 +336,8 @@
       ctx.save();
       ctx.globalAlpha = Math.max(0, Math.min(1, s.a));
       ctx.translate(s.x, s.y);
-      // orient streak in its movement direction
       const theta = Math.atan2(s.vy, s.vx);
       ctx.rotate(theta);
-      // draw a thin rounded rect as the streak
       const wR = s.width, hR = s.len;
       ctx.beginPath();
       ctx.moveTo(-hR*0.5, -wR*0.5);
@@ -386,6 +462,8 @@
       amp: rand(...PLANE.amp), freq: rand(...PLANE.freq), phase: rand(0,Math.PI*2),
       size: rand(...PLANE.size),
       a:0, t:0, hoverT:0, vy:0, rot:0, rotV:0,
+      fxHover: 0,
+      fxFlashTill: 0,
       _trailNext: performance.now() + (TRAIL_SPAWN_MS[0] + Math.random()*(TRAIL_SPAWN_MS[1]-TRAIL_SPAWN_MS[0])),
     };
   }
@@ -401,7 +479,9 @@
       vx: rand(...DRONE.speed) * (fromLeft?1:-1),
       amp: rand(...DRONE.amp), freq: rand(...DRONE.freq), phase: rand(0,Math.PI*2),
       size: rand(...DRONE.size),
-      a:0, t:0, hoverT:0, vy:0, rot:0, rotV:0
+      a:0, t:0, hoverT:0, vy:0, rot:0, rotV:0,
+      fxHover: 0,
+      fxFlashTill: 0
     };
   }
 
@@ -417,53 +497,197 @@
     ctx.restore();
   }
 
-  // visuals — simple vector shapes (no external images required)
   function drawPlane(p){
-    const s = p.size, body = s*2.4, wing = s*1.6;
+    const s = p.size;                // scale anchor from your spawner
+    const L = s * 2.6;               // fuselage length
+    const H = s * 0.95;              // fuselage height (total)
+    const R = H * 0.5;
+
+    // palette (tweak freely)
+    const C_WHITE = "#ffffff";
+    const C_OUT   = "rgba(25,28,35,0.65)";
+    const C_BELLY = "#6ea0d9";
+    const C_TAIL  = "#5e94d3";
+    const C_STRIP = "#f08a40";       // orange cheatline
+    const C_WIN   = "#3a4c68";
+    const C_WIN_H = "rgba(255,255,255,0.25)";
+
     ctx.save();
     ctx.translate(p.x, p.y);
-    const ang = (p.state==="fall") ? (p.rot || 0) : 0;
+    const ang = (p.state === "fall") ? (p.rot || 0) : 0;
     ctx.rotate(ang);
+
+    // face the plane by dir (+1 L→R, -1 R→L)
     const flipX = (p.dir === -1) ? -1 : 1;
     ctx.scale(flipX, 1);
+
+    // HOVER wobble (subtle roll + bob)
+    if (p.state === "fly" && p.fxHover > 0){
+      const k = p.fxHover;
+      ctx.translate(0, Math.sin(p.t*8)*HOVER_WOBBLE.bob*k);
+      ctx.rotate(Math.sin(p.t*5)*HOVER_WOBBLE.rot*k);
+    }
+
+    // CLICK flash timing
+    const now = performance.now();
+    const flashA = (now < (p.fxFlashTill||0)) ? (1 - (p.fxFlashTill-now)/CLICK_FLASH_MS) : 0;
     ctx.globalAlpha = Math.max(0, Math.min(1, p.a));
 
-    // fuselage
-    ctx.fillStyle = "rgba(200,205,210,0.95)";
-    ctx.fillRect(-body*0.5, -s*0.25, body, s*0.5);
-    // nose cone
-    ctx.beginPath();
-    ctx.moveTo(body*0.5, -s*0.25);
-    ctx.lineTo(body*0.5 + s*0.7, 0);
-    ctx.lineTo(body*0.5,  s*0.25);
-    ctx.closePath(); ctx.fill();
-    // wings
-    ctx.fillStyle = "rgba(170,175,182,0.95)";
-    ctx.fillRect(-wing*0.2, -s*0.9, wing*0.4, s*1.8);
-    // tail
-    ctx.fillRect(-body*0.45, -s*0.75, s*0.25, s*0.9);
+    // ---------------- FUSELAGE SHAPE ----------------
+    const left  = -L*0.52, right =  L*0.48;
+    const noseX = right, tailX = left;
+    const topY  = -R*0.75, botY  =  R*0.75;
 
-    // FALL visuals: cool white strobe (no orange)
-    if (p.state === "fall") {
-      const t = performance.now()*0.008;
-      const pulse = (Math.sin(t*6)+1)*0.5;
-      ctx.save();
-      ctx.translate(body*0.45, 0);
-      ctx.globalAlpha = 0.35 + 0.55*pulse;
-      ctx.fillStyle = "rgba(230,240,255,0.95)";
+    // hover halo (independent)
+    if (p.state==="fly" && p.fxHover>0.01){
+      drawHoverHalo(0, 0, s*2.1, p.fxHover);
+    }
+
+    // white body
+    ctx.fillStyle = C_WHITE;
+    ctx.strokeStyle = C_OUT;
+    ctx.lineWidth = Math.max(1, s*0.06);
+
+    ctx.beginPath();
+    // tail round
+    ctx.moveTo(tailX, 0);
+    ctx.ellipse(tailX, 0, R*0.85, R*0.75, 0, Math.PI*0.5, Math.PI*1.5);
+    // top edge to nose
+    ctx.lineTo(noseX, topY);
+    // rounded nose
+    ctx.quadraticCurveTo(noseX + s*0.55, 0, noseX, botY);
+    // bottom edge back to tail
+    ctx.lineTo(tailX, botY);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+
+    // blue belly (simple inset)
+    ctx.fillStyle = C_BELLY;
+    ctx.beginPath();
+    ctx.moveTo(tailX + s*0.15, 0);
+    ctx.lineTo(noseX - s*0.10, 0);
+    ctx.quadraticCurveTo(noseX + s*0.38, 0, noseX - s*0.10, botY - s*0.05);
+    ctx.lineTo(tailX + s*0.10, botY - s*0.05);
+    ctx.quadraticCurveTo(tailX - s*0.25, botY - s*0.25, tailX + s*0.15, 0);
+    ctx.closePath();
+    ctx.fill();
+
+    // thin orange cheatline
+    ctx.strokeStyle = C_STRIP;
+    ctx.lineWidth = Math.max(1, s*0.07);
+    ctx.beginPath();
+    ctx.moveTo(tailX + s*0.12, topY + R*0.95);
+    ctx.lineTo(noseX - s*0.05, topY + R*0.95);
+    ctx.stroke();
+
+    // cockpit window
+    ctx.fillStyle = C_WIN;
+    ctx.beginPath();
+    const cx = noseX - s*0.25, cy = topY + R*0.55;
+    ctx.moveTo(cx - s*0.15, cy - s*0.10);
+    ctx.quadraticCurveTo(cx + s*0.45, cy - s*0.18, cx + s*0.50, cy + s*0.02);
+    ctx.quadraticCurveTo(cx + s*0.35, cy + s*0.22, cx - s*0.10, cy + s*0.18);
+    ctx.closePath(); ctx.fill();
+    // cockpit highlight
+    ctx.fillStyle = C_WIN_H;
+    ctx.beginPath();
+    ctx.ellipse(cx + s*0.20, cy, s*0.30, s*0.14, 0, 0, Math.PI*2);
+    ctx.fill();
+
+    // tail fin (blue)
+    ctx.fillStyle = C_TAIL;
+    ctx.beginPath();
+    ctx.moveTo(tailX + s*0.10, topY + s*0.15);
+    ctx.lineTo(tailX - s*0.85, topY - s*0.35);
+    ctx.lineTo(tailX - s*0.20, topY + s*0.65);
+    ctx.lineTo(tailX + s*0.08, topY + s*0.48);
+    ctx.closePath(); ctx.fill();
+    // tail fin stripe
+    ctx.strokeStyle = "#ffffff";
+    ctx.lineWidth = Math.max(1, s*0.05);
+    ctx.beginPath();
+    ctx.moveTo(tailX - s*0.65, topY - s*0.22);
+    ctx.lineTo(tailX - s*0.10, topY + s*0.45);
+    ctx.stroke();
+
+    // simple straight wing (light gray)
+    ctx.fillStyle = "#cfd7df";
+    ctx.beginPath();
+    ctx.moveTo(-s*0.35, botY - s*0.20);
+    ctx.lineTo(-s*1.30, botY + s*0.10);
+    ctx.lineTo( s*0.95,  botY - s*0.05);
+    ctx.lineTo( s*0.30,  botY - s*0.30);
+    ctx.closePath(); ctx.fill();
+
+    // single under-wing engine pod (blue)
+    const ex = -s*0.10, ey = botY - s*0.10;
+    ctx.fillStyle = C_BELLY;
+    ctx.beginPath();
+    ctx.ellipse(ex, ey, s*0.55, s*0.28, 0, 0, Math.PI*2);
+    ctx.fill();
+    // intake
+    ctx.fillStyle = "#2c3340";
+    ctx.beginPath();
+    ctx.ellipse(ex - s*0.18, ey, s*0.28, s*0.18, 0, 0, Math.PI*2);
+    ctx.fill();
+    // pylon
+    ctx.fillStyle = "#9fb6cf";
+    ctx.fillRect(ex - s*0.20, ey - s*0.48, s*0.24, s*0.32);
+
+    // windows (row of rounded ovals)
+    ctx.fillStyle = C_WIN;
+    const nWin = 8, gap = (L*0.75)/(nWin-1), start = tailX + s*0.55;
+    for (let i=0;i<nWin;i++){
+      const wx = start + i*gap, wy = topY + R*0.70;
       ctx.beginPath();
-      ctx.arc(0,0, s*0.18 + pulse*0.12, 0, Math.PI*2);
+      ctx.ellipse(wx, wy, s*0.17, s*0.11, 0, 0, Math.PI*2);
       ctx.fill();
-      ctx.restore();
-      // subtle panel flicker mid-body (very faint, cold)
+    }
+
+    // ---------------- NAV / STROBE LIGHTS (direction-aware) ----------------
+    const t = performance.now()/1000;
+    const leftIsRed = (flipX === 1);
+    const red   = "rgba(255,60,50,0.95)";
+    const green = "rgba(80,255,130,0.95)";
+    const white = "rgba(255,255,255,0.95)";
+
+    const tipL = { x: -s*1.12, y: botY - s*0.22 };
+    const tipR = { x:  s*1.12, y: botY - s*0.16 };
+    const tail = { x: tailX + s*0.10, y: topY + s*0.10 };
+
+    (typeof glowDisc==="function"?glowDisc:simpleGlow)(ctx, tipL.x, tipL.y, s*0.30, leftIsRed ? red : green, 0.55);
+    (typeof glowDisc==="function"?glowDisc:simpleGlow)(ctx, tipR.x, tipR.y, s*0.30, leftIsRed ? green : red, 0.55);
+    (typeof glowDisc==="function"?glowDisc:simpleGlow)(ctx, tail.x, tail.y, s*0.24, white, 0.40);
+
+    const st = (typeof strobeDouble==="function" ? strobeDouble(t) : ((Math.sin(t*8)>0.85)?1:0));
+    if (st>0) (typeof glowDisc==="function"?glowDisc:simpleGlow)(ctx, tail.x + s*0.30, topY + s*0.05, s*(0.30 + 0.10*st), white, 0.70*st);
+
+    const be = (typeof beaconPulse==="function" ? beaconPulse(t) : (0.5 + 0.5*Math.sin(t*6)));
+    if (be>0.85) (typeof glowDisc==="function"?glowDisc:simpleGlow)(ctx, 0, topY + s*0.05, s*0.28, red, 0.65);
+
+    // click flash veil
+    if (flashA>0){
       ctx.save();
-      ctx.globalAlpha = 0.08 + 0.06*pulse;
-      ctx.fillStyle = "rgba(220,230,255,0.6)";
-      ctx.fillRect(-s*0.4, -s*0.18, s*0.8, s*0.36);
+      ctx.globalAlpha = 0.35*flashA;
+      ctx.fillStyle = "#ffffff";
+      ctx.fillRect(-L, -H, L*2, H*2);
       ctx.restore();
     }
 
     ctx.restore();
+
+    // fallback glow helper if your util isn't present
+    function simpleGlow(c, x, y, r, color, a){
+      c.save();
+      c.globalAlpha = a ?? 0.6;
+      const g = c.createRadialGradient(x, y, 0, x, y, r);
+      g.addColorStop(0, color);
+      g.addColorStop(1, "rgba(0,0,0,0)");
+      c.fillStyle = g;
+      c.beginPath(); c.arc(x, y, r, 0, Math.PI*2); c.fill();
+      c.restore();
+    }
   }
 
   function drawDrone(d){
@@ -471,6 +695,17 @@
     ctx.save(); ctx.translate(d.x,d.y);
     const ang = (d.state==="fly" || d.state==="retire") ? Math.sin(d.t*1.7)*0.04 : (d.rot||0);
     ctx.rotate(ang);
+
+    // HOVER wobble
+    if (d.state==="fly" && d.fxHover>0){
+      const k = d.fxHover;
+      ctx.translate(0, Math.sin(d.t*9)*HOVER_WOBBLE.bob*0.8*k);
+      ctx.rotate(Math.sin(d.t*6)*HOVER_WOBBLE.rot*0.8*k);
+      drawHoverHalo(0, 0, s*1.9, d.fxHover);
+    }
+
+    const now = performance.now();
+    const flashA = (now < (d.fxFlashTill||0)) ? (1 - (d.fxFlashTill-now)/CLICK_FLASH_MS) : 0;
     ctx.globalAlpha = clamp(0,d.a,1);
 
     // body
@@ -485,9 +720,18 @@
     const rotor = (rx,ry)=>{
       ctx.save(); ctx.translate(rx,ry);
       ctx.rotate(b);
-      ctx.fillStyle="rgba(40,40,44,0.9)";
+      ctx.fillStyle="rgba(40,40,44,0.9)"; // blades
       ctx.fillRect(-s*0.55, -s*0.08, s*1.1, s*0.16);
       ctx.fillRect(-s*0.08, -s*0.55, s*0.16, s*1.1);
+
+      // click flash veil (covers drone)
+      if (flashA>0){
+        ctx.save();
+        ctx.globalAlpha = 0.32*flashA;
+        ctx.fillStyle = "#ffffff";
+        ctx.fillRect(-s*2.2, -s*2.2, s*4.4, s*4.4);
+        ctx.restore();
+      }
       ctx.restore();
     };
     rotor(-s*1.4, -s*1.2);
@@ -495,28 +739,37 @@
     rotor(-s*1.4,  s*1.2);
     rotor( s*1.4,  s*1.2);
 
-    // FALL visuals: cool-white status strobe + faint electrical glow
-    if (d.state === "fall"){
-      const t = performance.now()*0.010;
-      const pulse = (Math.sin(t*7)+1)*0.5;
-      // strobe at front
-      ctx.save();
-      ctx.translate(d.size*0.7, 0);
-      ctx.globalAlpha = 0.35 + 0.55*pulse;
-      ctx.fillStyle = "rgba(230,240,255,0.95)";
-      ctx.beginPath();
-      ctx.arc(0,0, d.size*0.16 + pulse*0.10, 0, Math.PI*2);
-      ctx.fill();
-      ctx.restore();
-      // faint underside glow
-      ctx.save();
-      ctx.globalAlpha = 0.10 + pulse*0.12;
-      ctx.fillStyle = "rgba(220,230,255,0.55)";
-      ctx.beginPath();
-      ctx.ellipse(0, s*0.9, s*0.8, s*0.35, 0, 0, Math.PI*2);
-      ctx.fill();
-      ctx.restore();
+    // === DRONE LIGHTS ======================================================
+    const t = performance.now()/1000;
+    const frontIsRight = (Math.sign(d.vx||1) >= 0); // moving → front = right side
+    const frontX = frontIsRight ? s*0.75 : -s*0.75;
+    const rearX  = -frontX;
+
+    // steady tiny arm LEDs (subtle)
+    const armA = 0.25;
+    glowDisc(ctx, -s*1.4, -s*1.2, s*0.20, 'rgba(255,255,255,0.9)', armA);
+    glowDisc(ctx,  s*1.4, -s*1.2, s*0.20, 'rgba(255,255,255,0.9)', armA);
+    glowDisc(ctx, -s*1.4,  s*1.2, s*0.20, 'rgba(255,255,255,0.9)', armA);
+    glowDisc(ctx,  s*1.4,  s*1.2, s*0.20, 'rgba(255,255,255,0.9)', armA);
+
+    // front white strobe (faster when falling)
+    const st = d.state==="fall" ? strobeDouble(t*1.2) : strobeDouble(t);
+    if (st>0){
+      glowDisc(ctx, frontX, 0, s*(0.22 + 0.12*st), 'rgba(255,255,255,0.95)', 0.85*st);
     }
+
+    // rear red slow pulse
+    const be = d.state==="fall" ? Math.max(beaconPulse(t), 0.35) : beaconPulse(t);
+    if (be>0){
+      glowDisc(ctx, rearX, 0, s*0.26, 'rgba(255,60,50,0.95)', 0.75*be);
+    }
+
+    // faint underside glow while falling
+    if (d.state === "fall"){
+      const pulse = pulseSine(performance.now()*0.010, 7, 0.10, 0.22);
+      glowDisc(ctx, 0, s*0.9, s*0.65, 'rgba(230,240,255,0.8)', pulse);
+    }
+    // ======================================================================
 
     ctx.restore();
   }
@@ -539,20 +792,24 @@
   }
 
   function radius(a){ return (a.type==="plane") ? 24 : 18; }
+
   function tryArmHover(a, dt){
-    if (cursor.x<0) { a.hoverT=0; return; }
+    if (cursor.x<0) { a.hoverT=0; a.fxHover *= HOVER_DECAY; return; }
     const dx=a.x-cursor.x, dy=a.y-cursor.y;
     if (Math.hypot(dx,dy) < (HIT_R[a.type] || radius(a))) {
       a.hoverT += dt*1000;
+      a.fxHover = Math.min(1, a.fxHover + HOVER_GAIN);
       if (a.state==="fly"){
-        a.yBase += Math.sin(performance.now()*0.02)*0.08;
+        a.yBase += Math.sin(performance.now()*0.02)*0.10;  // tiny bob while armed
       }
       if (a.hoverT > HOVER_ARM_MS && a.state==="fly") knockDown(a);
     } else {
       a.hoverT = Math.max(0, a.hoverT - dt*400);
+      a.fxHover *= HOVER_DECAY;
     }
   }
 
+  // --- SINGLE DEFINITIONS (no duplicates) ---------------------------------
   function clickAt(x,y){
     const now=performance.now();
     if (now - lastKnockTs < CLICK_COOLDOWN_MS) return;
@@ -562,17 +819,29 @@
       const d = Math.hypot(a.x - x, a.y - y);
       if (d < (HIT_R[a.type]||radius(a)) && d < bestD){ best=i; bestD=d; }
     }
-    if (best>=0){ knockDown(actors[best]); lastKnockTs=now; }
+    if (best>=0){
+      const a = actors[best];
+      a.fxFlashTill = now + CLICK_FLASH_MS; // flash veil
+      spawnClickRing(a.x, a.y);             // ripple ring
+      knockDown(a);
+      lastKnockTs=now;
+    }
   }
 
   function knockDown(a){
     const now=performance.now();
     if (now - lastKnockTs < CLICK_COOLDOWN_MS) return;
+
+    // small hit-jolt before fall
+    const dir = Math.sign(a.vx||a.dir||1);
+    a.vx += -dir * 30;
+    a.vy -= 20;
+    a.rotV += (a.type==="plane" ? 0.004 : 0.006) * (Math.random()<0.5?-1:1);
+
     a.state="fall";
     a.a = Math.max(0.6, a.a);
-    a.vy = rand(40, 70);
+    a.vy = Math.max(a.vy, rand(40, 70));
     a.vx *= 0.40;
-    a.rotV = (a.type==="plane") ? rand(-1.2,1.2)*0.004 : rand(-1.6,1.6)*0.005;
 
     // stop plane smoke trail; switch to sparks
     a._trailNext = Number.POSITIVE_INFINITY;
@@ -647,6 +916,7 @@
 
     size();
     ctx.clearRect(0,0,w,h);
+    updateClickRings(dt);
 
     if (lampsPinned){
       const gy = groundY();
@@ -658,6 +928,7 @@
 
       updateFallFX(dt, gy);
       drawFallFX(ctx);
+      drawClickRings(ctx);
 
       const seg = segFromScene(currentScene, sceneProg);
       if (seg !== lastSeg){

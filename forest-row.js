@@ -2051,9 +2051,9 @@ fade: 0.04 + Math.random()*0.015,
     near = wrap.querySelector(".near");
 
     // your tiling art
-    back.style.backgroundImage = 'url("images/constructioncity_far.png")';
-    mid .style.backgroundImage = 'url("images/constructioncity_mid.png")';
-    near.style.backgroundImage = 'url("images/constructioncity_near.png")';
+    back.style.backgroundImage = 'url("images/constructioncity_far1.png")';
+    mid .style.backgroundImage = 'url("images/constructioncity_mid1.png")';
+    near.style.backgroundImage = 'url("images/constructioncity_near1.png")';
 // after back/mid/near exist & have images…
 /* ===== City click router (only active while city is visible) ===== */
 let router = document.getElementById("cityClickRouter");
@@ -3304,17 +3304,22 @@ raysPulse.style.opacity = (0.26 * pulseIn).toFixed(3);
         background: #000; opacity: 0; will-change: opacity, background-color;
       }
       #bgGrade .vignette{
-        position: fixed; inset: 0;
-        background: radial-gradient(ellipse at 50% 55%,
-          rgba(0,0,0,0) 40%, rgba(0,0,0,0.75) 100%);
-        opacity: 0; will-change: opacity; mix-blend-mode: normal;
-      }
-      #bgGrade .hue{
-        position: fixed; inset: 0;
-        background: rgba(70,100,140,1);
-        opacity: 0; mix-blend-mode: color;
-        will-change: opacity, background-color;
-      }
+  position: fixed; inset: 0;
+/* softer / disabled vignette */
+  background: radial-gradient(ellipse at 50% 55%,
+    rgba(0,0,0,0) 40%, rgba(0,0,0,0.20) 100%);
+  opacity: 0;                    /* <- keep at 0 to remove vignette */
+  mix-blend-mode: normal;
+  will-change: opacity;
+}
+#bgGrade .hue{
+  position: fixed; inset: 0;
+/* push to cooler blue */
+  background: rgb(80,120,180);
+  opacity: 0;                    /* will be driven in update() */
+  mix-blend-mode: color;
+  will-change: opacity, background-color;
+}
     `;
     const el = document.createElement("style");
     el.id = "bggrade-style";
@@ -3349,37 +3354,64 @@ raysPulse.style.opacity = (0.26 * pulseIn).toFixed(3);
 
   const L = (a,b,t)=>a+(b-a)*t;
 
-  function update(p){
-    build();
-    const { seg, t } = segInfo(p);
-    const tint = document.querySelector("#bgGrade .tint");
-    const hue  = document.querySelector("#bgGrade .hue");
-    const vig  = document.querySelector("#bgGrade .vignette");
-    if (!tint || !vig || !hue) return;
+function update(p){
+  build();
+  const { seg, t } = segInfo(p);
+  const tint = document.querySelector("#bgGrade .tint");
+  const hue  = document.querySelector("#bgGrade .hue");
+  const vig  = document.querySelector("#bgGrade .vignette");
+  if (!tint || !vig || !hue) return;
 
-    let tintOp = 0, vigOp = 0, hueOp = 0;
-    let r = 10, g = 14, b = 20; // deep cold
-    let hueColor = `rgb(70,100,140)`;
+  // ---------- COLOR PRESET: Deep cold blue like the reference ----------
+  // Neutral "dark base" behind everything (very subtle)
+  // If you want deeper, lower the numbers or raise tintOp below slightly.
+  let r = 16, g = 24, b = 32;                       // deep cold base
+  let hueColor = `rgb(70, 115, 160)`;               // bluish overlay (teal-ish)
 
-    if (seg === 1){
-      const tt = Math.max(0, (t - 0.10) / 0.90);
-      r = 26; g = 34; b = 48;
-      tintOp = L(0.00, 0.35, tt);
-      vigOp  = L(0.00, 0.18, tt);
-      hueOp  = L(0.00, 0.20, tt);
-    } else if (seg === 2){
-      r = 10; g = 14; b = 20;
-      tintOp = L(0.35, 0.65, t);
-      vigOp  = L(0.18, 0.40, t);
-      hueOp  = L(0.20, 0.38, t);
-    }
+  // ---------- Opacity dials ----------
+  // We keep vignette OFF (0). The blue comes from the HUE layer.
+  let tintOp = 0;   // neutral dark tint strength (keep low to avoid grey)
+  let hueOp  = 0;   // blue strength
+  let vigOp  = 0;   // vignette disabled
 
-    tint.style.backgroundColor = `rgb(${r}, ${g}, ${b})`;
-    tint.style.opacity = tintOp.toFixed(3);
-    vig.style.opacity  = vigOp.toFixed(3);
-    hue.style.backgroundColor = hueColor;
-    hue.style.opacity  = hueOp.toFixed(3);
+  // Ease helper for nice ramps
+  const clamp01 = (x)=>Math.max(0, Math.min(1, x));
+  const smooth = (x)=>x*x*(3-2*x);                  // smoothstep (0..1)
+
+  // We map the three construction segments to a blue ramp,
+  // keeping "tint" small so the blue isn't muddied to grey.
+  if (seg === 0){
+    // Full → mid1 (early construction): very subtle wash
+    const tt = smooth(t);
+    hueOp  = 0.18 * tt;
+    tintOp = 0.05 * tt;                              // tiny depth, avoid greying
+  } else if (seg === 1){
+    // mid1 → mid2: strengthen blue, keep tint modest
+    const tt = smooth(t);
+    hueOp  = 0.18 + 0.14 * tt;                       // 0.18 → 0.32
+    tintOp = 0.05 + 0.06 * tt;                       // 0.05 → 0.11
+  } else {
+    // mid2 → bare: strongest blue, tint still controlled
+    const tt = smooth(t);
+    hueOp  = 0.32 + 0.10 * tt;                       // 0.32 → 0.42
+    tintOp = 0.11 + 0.05 * tt;                       // 0.11 → 0.16
   }
+
+  // Safety clamps
+  hueOp  = clamp01(hueOp);
+  tintOp = clamp01(tintOp);
+  vigOp  = 0;                                        // force vignette OFF
+
+  // Apply
+  tint.style.backgroundColor = `rgb(${r}, ${g}, ${b})`;
+  tint.style.opacity = tintOp.toFixed(3);
+
+  hue.style.backgroundColor = hueColor;
+  hue.style.opacity = hueOp.toFixed(3);
+
+  vig.style.opacity = vigOp.toFixed(3);
+}
+
 
   window.__grade__ = { build, update };
 })();
