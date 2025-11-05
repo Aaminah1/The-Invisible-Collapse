@@ -1,0 +1,78 @@
+/* --- Breathful button polish (split transforms) --- */
+:root{
+  --mic-off-bg: rgba(12,12,16,0.85);
+  --mic-on-bg:  rgba(16,18,22,0.90);
+  --mic-fg:     #EAF0FF;
+  --mic-glow:   0 6px 20px rgba(0,0,0,.25);
+  --mic-glow-hot: 0 10px 36px rgba(0,0,0,.32);
+  --mic-warm:   24deg;   /* ON hue shift  */
+  --mic-cool:   200deg;  /* OFF hue hint  */
+}
+
+/* OUTER: GSAP slides this in/out only (no scale/hover here) */
+#micWindBtn{
+  position: fixed; right:16px; bottom:16px; z-index:9999;
+  display:inline-flex; padding:0; border:none; background:transparent;
+  pointer-events:none;               /* JS enables when visible */
+  transform: translateZ(0);          /* GSAP will add xPercent */
+}
+
+/* INNER: real visual pill that we scale/glow on hover/press */
+#micWindBtn .micInner{
+  display:inline-flex; align-items:center; gap:.55rem;
+  padding:.62rem .90rem .62rem .72rem;
+  border-radius:999px; border:1px solid rgba(255,255,255,.08);
+  color:var(--mic-fg);
+  background: var(--mic-off-bg);
+  box-shadow: var(--mic-glow);
+  backdrop-filter: blur(6px) saturate(110%);
+  -webkit-backdrop-filter: blur(6px) saturate(110%);
+  transition:
+    transform .16s cubic-bezier(.2,.8,.2,1),
+    box-shadow .18s ease,
+    background-color .18s ease,
+    filter .18s ease,
+    opacity .18s ease;
+  transform: scale(var(--btnScale, 1));  /* hover/press writes this */
+  position: relative; overflow:hidden;
+}
+
+/* Warmer when ON (JS toggles data-on) */
+#micWindBtn[data-on="1"] .micInner{
+  background: var(--mic-on-bg);
+  box-shadow: var(--mic-glow-hot);
+  filter: hue-rotate(var(--mic-warm)) saturate(110%);
+}
+
+/* Cooler when OFF */
+#micWindBtn:not([data-on="1"]) .micInner{
+  filter: hue-rotate(var(--mic-cool)) saturate(100%);
+}
+
+/* Hover = inhale/hold (scale inner only) */
+#micWindBtn:hover .micInner{ --btnScale: .989; box-shadow: 0 8px 28px rgba(0,0,0,.28); }
+/* Press = compress */
+#micWindBtn:active .micInner{ --btnScale: .975; }
+
+/* Exhale pulse ring on inner (JS toggles .exhale on outer) */
+#micWindBtn .micInner::after{
+  content:"";
+  position:absolute; left: var(--pulse-x, 50%); top: var(--pulse-y, 50%);
+  width:0; height:0; pointer-events:none; border-radius:50%;
+  background: radial-gradient(closest-side,
+    rgba(255,255,255,.35) 0%,
+    rgba(255,255,255,.18) 30%,
+    rgba(255,255,255,0)   70%);
+  opacity:0; transform: translate(-50%,-50%) scale(.2);
+}
+#micWindBtn.exhale .micInner::after{ animation: mic-exhale .45s ease-out forwards; }
+
+@keyframes mic-exhale{
+  0%   { opacity:0;   transform:translate(-50%,-50%) scale(.2);  }
+  20%  { opacity:.32; transform:translate(-50%,-50%) scale(1.0); }
+  100% { opacity:0;   transform:translate(-50%,-50%) scale(2.2); }
+}
+
+@media (prefers-reduced-motion: reduce){
+  #micWindBtn .micInner, #micWindBtn .micInner::after { transition:none; animation:none; }
+}

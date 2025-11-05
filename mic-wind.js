@@ -1,6 +1,9 @@
-// mic-wind.js — Mic stays visible across site except Intro/Bridges/Outro.
-// Slides IN after Intro, stays ON across Forest/Lamps/City, slides OUT at #bridge, #bridgeFade, #outro.
-// Also auto-disables when hidden (privacy), but never auto-toggles between allowed sections.
+// mic-wind.js — Button appears everywhere EXCEPT Intro/Bridges/Outro.
+// Slides in after Intro; slides out on #bridge, #bridgeFade, #outro.
+// Labels are ACTION-based:
+//   OFF: "🌬️ Share your breath"  (click → enable)
+//   ON : "🛑 Withdraw breath"     (click → disable)
+// When ON, title shows: "Breath is shaping this moment".
 
 /* ===================== Debug meter (bottom-left) ===================== */
 (() => {
@@ -8,7 +11,7 @@
   meter.style.cssText = `
     position:fixed; left:16px; bottom:16px; width:160px; height:10px;
     background:rgba(255,255,255,.15); border-radius:6px; overflow:hidden;
-    z-index:9999; box-shadow:0 4px 16px rgba(0,0,0,.25)`;
+    z-index:9998; box-shadow:0 4px 16px rgba(0,0,0,.25)`;
   const fill = document.createElement('div');
   fill.style.cssText = `height:100%; width:0%; background:#74f; transition:width .08s linear`;
   meter.appendChild(fill);
@@ -72,16 +75,6 @@ async function preflightMic() {
   } catch {}
 }
 
-function explainGetUserMediaError(err) {
-  const name = (err && (err.name || err.code)) || "Error";
-  if (name === "NotAllowedError" || name === "PermissionDeniedError") return "Mic access was denied. Allow mic in Site settings, then reload.";
-  if (name === "NotFoundError" || name === "DevicesNotFoundError")   return "No microphone was found. Plug one in or enable it in OS settings.";
-  if (name === "NotReadableError" || name === "TrackStartError")     return "The microphone is busy/unavailable. Close other apps using the mic.";
-  if (name === "OverconstrainedError" || name === "ConstraintNotSatisfiedError") return "Requested audio constraints aren’t supported.";
-  if (name === "SecurityError") return "Blocked by browser security policy. Ensure HTTPS/localhost and allow mic.";
-  return (err && err.message) ? err.message : "Unknown microphone error.";
-}
-
 /* ===================== Main mic logic (trees + leaves only) ===================== */
 (() => {
   let ctx, analyser, source, rafId = 0, enabled = false;
@@ -89,7 +82,7 @@ function explainGetUserMediaError(err) {
   let baseline = 0.00;
   const data = new Float32Array(2048);
 
-  // shared breath state (read by other scripts if needed)
+  // shared breath state
   if (window.__breathEnv__   == null) window.__breathEnv__   = 0;
   if (window.__breathFast__  == null) window.__breathFast__  = 0;
   if (window.__breathPhase__ == null) window.__breathPhase__ = 0;
@@ -98,8 +91,77 @@ function explainGetUserMediaError(err) {
   // public on/off state
   window.__micWindState__ = { isOn:false };
 
+  // labels (ACTION-based)
+  const MIC_LABELS = {
+    enable: "🌬️ Share your breath",
+    disable: "🛑 Withdraw breath",
+    activeTitle: "Breath is shaping this moment",
+    withdrawnNote: "Breath withdrawn"
+  };
+
+  // util
   const clamp01 = v => Math.max(0, Math.min(1, v));
   const lerp    = (a,b,t) => a + (b-a)*t;
+
+function setButtonLabel(btn, isOn){
+  if (!btn) return;
+  const inner = ensureMicInner(btn);
+  inner.textContent = isOn ? MIC_LABELS.disable : MIC_LABELS.enable;
+  btn.title = isOn ? MIC_LABELS.activeTitle : "";
+  btn.setAttribute('aria-pressed', isOn ? 'true' : 'false');
+  if (isOn) btn.setAttribute('data-on','1'); else btn.removeAttribute('data-on');
+}
+
+  function toastWithdrawn(){
+    let toast = document.getElementById("micWithdrawnToast");
+    if (!toast){
+      toast = document.createElement("div");
+      toast.id = "micWithdrawnToast";
+      toast.style.cssText = `
+        position:fixed; right:16px; bottom:72px; z-index:9999;
+        padding:6px 10px; border-radius:10px;
+        color:#dfe3ee; background:rgba(10,10,13,.82);
+        border:1px solid rgba(255,255,255,.06);
+        font:500 12px/1.2 system-ui; opacity:0; pointer-events:none;
+        transform:translateY(6px)`;
+      document.body.appendChild(toast);
+    }
+    toast.textContent = MIC_LABELS.withdrawnNote;
+
+    if (window.gsap){
+      gsap.killTweensOf(toast);
+      gsap.set(toast, { opacity:0, y:6 });
+      gsap.to(toast, { opacity:1, y:0, duration:.18, ease:"power2.out" });
+      gsap.to(toast, { opacity:0, y:6, duration:.25, ease:"power2.in", delay:1.0 });
+    } else {
+      toast.style.opacity = "1";
+      setTimeout(()=> toast.style.opacity="0", 1200);
+    }
+  }
+
+  // click feel: compress → soft pulse
+  function clickPulseOn(btn){
+    if (!btn) return;
+    if (window.gsap){
+      const tl = gsap.timeline();
+      tl.to(btn, { duration:0.12, ease:"power2.out", scale:0.985 }, 0)
+        .to(btn, { duration:0.28, ease:"sine.out",  scale:1.0, boxShadow:"0 8px 28px rgba(0,0,0,.28)" }, 0.12)
+        .to(btn, { duration:0.28, ease:"sine.out",  boxShadow:"0 6px 20px rgba(0,0,0,.25)" }, 0.12);
+    } else {
+      btn.style.transform = "scale(0.985)";
+      setTimeout(()=> btn.style.transform = "scale(1.0)", 120);
+    }
+  }
+  function clickPulseOff(btn){
+    if (!btn) return;
+    if (window.gsap){
+      gsap.to(btn, { duration:0.18, ease:"power2.out", scale:0.995 })
+          .to(btn, { duration:0.22, ease:"power2.inOut", scale:1.0 }, ">-0.06");
+    } else {
+      btn.style.transform = "scale(0.995)";
+      setTimeout(()=> btn.style.transform = "scale(1.0)", 180);
+    }
+  }
 
   function analyse() {
     if (!enabled || !analyser) return;
@@ -191,7 +253,7 @@ function explainGetUserMediaError(err) {
   }
 
   async function enableMic(btn){
-    // Toggle OFF
+    // Toggle OFF (→ "Share your breath")
     if (enabled) {
       enabled = false;
       window.__micWindState__.isOn = false;
@@ -212,18 +274,23 @@ function explainGetUserMediaError(err) {
       window.__smokeSetWind  && window.__smokeSetWind(0);
       window.__smokeSetBoost && window.__smokeSetBoost(null);
 
-      btn && (btn.textContent = "🌬️ Enable mic");
+      if (btn){
+        setButtonLabel(btn, false); // OFF label = action to enable
+        clickPulseOff(btn);
+        // small toast so user knows they disabled
+        toastWithdrawn();
+      }
+
       try { if (windACtx && windACtx.state === "running") await windACtx.suspend(); } catch {}
       return;
     }
 
-    // Toggle ON
+    // Toggle ON (→ "Withdraw breath")
     try {
       await preflightMic();
 
       if (window.windACtx && windACtx.state === "suspended") { await windACtx.resume(); }
 
-      // request mic
       const constraints = { audio: { echoCancellation:false, noiseSuppression:false, autoGainControl:false } };
       try { micStream = await navigator.mediaDevices.getUserMedia(constraints); }
       catch (e) {
@@ -231,7 +298,6 @@ function explainGetUserMediaError(err) {
         else throw e;
       }
 
-      // analysis graph
       ctx = new (window.AudioContext || window.webkitAudioContext)();
       if (ctx.state === "suspended") { await ctx.resume(); }
       source = ctx.createMediaStreamSource(micStream);
@@ -246,7 +312,12 @@ function explainGetUserMediaError(err) {
 
       enabled = true;
       window.__micWindState__.isOn = true;
-      btn && (btn.textContent = "🛑 Disable Mic");
+
+      if (btn){
+        setButtonLabel(btn, true);   // ON label = action to disable
+        clickPulseOn(btn);
+      }
+
       analyse();
     } catch (err) {
       console.error("Mic error:", err);
@@ -254,11 +325,55 @@ function explainGetUserMediaError(err) {
     }
   }
 
-  function attachButton(){
-    const btn = document.getElementById("micWindBtn");
-    if (!btn) return;
-    btn.addEventListener("click", () => enableMic(btn));
+function exhaleRipple(btn, evt){
+  if (!btn) return;
+  const inner = ensureMicInner(btn);
+  const r = inner.getBoundingClientRect();
+  const x = (evt?.clientX ?? (r.left + r.width*0.5)) - r.left;
+  const y = (evt?.clientY ?? (r.top  + r.height*0.5)) - r.top;
+  inner.style.setProperty('--pulse-x', x + 'px');
+  inner.style.setProperty('--pulse-y', y + 'px');
+
+  btn.classList.remove('exhale');     // restart
+  // force reflow
+  // eslint-disable-next-line no-unused-expressions
+  btn.offsetHeight;
+  btn.classList.add('exhale');
+  setTimeout(()=> btn.classList.remove('exhale'), 480);
+}
+
+function ensureMicInner(btn){
+  if (!btn) return null;
+  let inner = btn.querySelector('.micInner');
+  if (!inner){
+    inner = document.createElement('span');
+    inner.className = 'micInner';
+    inner.textContent = btn.textContent || "";
+    btn.textContent = "";
+    btn.appendChild(inner);
   }
+  return inner;
+}
+
+  function attachButton(){
+  const btn = document.getElementById("micWindBtn");
+  if (!btn) return;
+
+  ensureMicInner(btn);
+  setButtonLabel(btn, false);
+
+  btn.addEventListener("click", (e) => {
+    enableMic(btn);
+    exhaleRipple(btn, e);
+  });
+
+  // Pointer feel (writes CSS var consumed by .micInner)
+  const setScale = s => btn.style.setProperty('--btnScale', s);
+  btn.addEventListener('pointerdown', () => setScale('.985'));
+  btn.addEventListener('pointerup',   () => setScale('1'));
+  btn.addEventListener('pointerleave',() => setScale('1'));
+}
+
 
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", attachButton);
@@ -278,122 +393,137 @@ function explainGetUserMediaError(err) {
   };
 })();
 
-/* ===================== Visibility controller (strict: hide only on Intro/Bridges/Outro) ===================== */
+/* ===================== Visibility controller (strict: NO button in Intro/Bridges/Outro) ===================== */
 (() => {
   const btn = document.getElementById("micWindBtn");
   if (!btn) return;
 
-  // Start hidden until we pass the intro
-  if (window.gsap) {
-    gsap.set(btn, { xPercent: 120, autoAlpha: 0 });
-  } else {
-    btn.style.transform = 'translateX(120%)';
-    btn.style.opacity = '0';
-  }
-  btn.style.pointerEvents = "none";
+  // Hard hide helpers (avoid flicker)
+  const hardHide = () => { btn.style.display = "none"; btn.style.pointerEvents = "none"; };
+  const hardShow = () => { btn.style.display = "inline-flex"; };
+
+  // Start fully hidden (prevents flash on Intro)
+  hardHide();
+  if (window.gsap) gsap.set(btn, { xPercent: 120, autoAlpha: 0 });
 
   const slideIn  = () => {
+    hardShow();
     btn.style.pointerEvents = "auto";
     if (window.gsap) gsap.to(btn, { xPercent: 0, autoAlpha: 1, duration: 0.45, ease: "power3.out" });
-    else { btn.style.transform='translateX(0)'; btn.style.opacity='1'; }
+    else { btn.style.opacity='1'; btn.style.transform='translateX(0)'; }
   };
   const slideOut = () => {
-    if (window.gsap) gsap.to(btn, {
-      xPercent: 120, autoAlpha: 0, duration: 0.35, ease: "power2.in",
-      onComplete: () => (btn.style.pointerEvents = "none")
-    });
-    else { btn.style.transform='translateX(120%)'; btn.style.opacity='0'; btn.style.pointerEvents='none'; }
+    if (window.gsap) {
+      gsap.to(btn, {
+        xPercent: 120, autoAlpha: 0, duration: 0.35, ease: "power2.in",
+        onComplete: () => { btn.style.pointerEvents = "none"; hardHide(); }
+      });
+    } else {
+      btn.style.opacity='0'; btn.style.transform='translateX(120%)';
+      btn.style.pointerEvents='none'; hardHide();
+    }
   };
 
-  // Sections where the mic MUST be hidden
+  // Sections where the mic MUST NOT appear
   const EXCLUDED_SEL = ["#landing", "#bridge", "#bridgeFade", "#outro"];
-  const EXCLUDED = EXCLUDED_SEL.map(s => document.querySelector(s)).filter(Boolean);
+  let EXCLUDED = [];
 
-  // Track which excluded elements are currently onscreen (≥ 25% visible)
+  // Make it resilient if those sections mount late
+  const requeryExcluded = () => {
+    EXCLUDED = EXCLUDED_SEL.map(s => document.querySelector(s)).filter(Boolean);
+  };
+  requeryExcluded();
+
   const visibleExcluded = new Set();
-  let visible = false;            // current visual state (do we think it's shown?)
-  let forestSeenOnce = false;     // label hint the first time
+  let shown = false;
 
+  // Decide show/hide based on whether ANY excluded is intersecting by even 1%
   function evaluate() {
-    const mustHide = visibleExcluded.size > 0;
+    const mustHide =
+      visibleExcluded.size > 0 ||
+      window.scrollY < 1; // also hide if literally at top (landing edge cases)
 
     if (mustHide) {
-      if (visible) {
-        // Hide + disable mic so user isn't recorded in excluded areas
+      if (shown) {
+        // Privacy: fully disable when entering excluded area
         window.__micWind__?.disable();
-        btn.textContent = "🌬️ Enable mic";
         slideOut();
-        visible = false;
+        shown = false;
+      } else {
+        // ensure hard hidden from first paint
+        hardHide();
       }
       return;
     }
 
-    // Allowed area → show
-    if (!visible) {
-      // First time we leave intro into forest, nudge the CTA text
-      const fr = document.querySelector("#forestReveal");
-      if (!forestSeenOnce && fr) {
-        const r = fr.getBoundingClientRect();
-        const inView = r.bottom > 1 && r.top < (window.innerHeight || document.documentElement.clientHeight) - 1;
-        if (inView && !window.__micWind__?.isOn()) {
-          btn.textContent = "🌬️ Enable mic for Forest";
-          forestSeenOnce = true;
-        }
-      }
+    if (!shown) {
       slideIn();
-      visible = true;
+      shown = true;
     }
   }
 
-  // IntersectionObserver is more reliable than multiple triggers with pins/scrub
-  if ('IntersectionObserver' in window) {
+  // IntersectionObserver that treats ANY overlap as "visible"
+  function attachIO() {
+    if (!('IntersectionObserver' in window)) {
+      // Fallback: simple scroll check
+      const inView = el => {
+        const r = el.getBoundingClientRect();
+        const vh = window.innerHeight || document.documentElement.clientHeight;
+        return Math.max(0, Math.min(r.bottom, vh) - Math.max(r.top, 0)) > 0;
+      };
+      const onScroll = () => {
+        visibleExcluded.clear();
+        EXCLUDED.forEach(el => { if (inView(el)) visibleExcluded.add(el.id || 'x'); });
+        evaluate();
+      };
+      window.addEventListener('scroll', onScroll, { passive: true });
+      window.addEventListener('resize', onScroll, { passive: true });
+      onScroll();
+      return;
+    }
+
     const io = new IntersectionObserver((entries) => {
       entries.forEach(e => {
-        const id = e.target.id || e.target.getAttribute('aria-label') || 'excluded';
-        if (e.isIntersecting && e.intersectionRatio >= 0.25) {
-          visibleExcluded.add(id);
+        const key = e.target.id || e.target.getAttribute('aria-label') || 'excluded';
+        if (e.isIntersecting && e.intersectionRatio > 0.001) {
+          visibleExcluded.add(key);
         } else {
-          visibleExcluded.delete(id);
+          visibleExcluded.delete(key);
         }
       });
       evaluate();
     }, {
       root: null,
       rootMargin: '0px',
-      threshold: [0, 0.25, 0.5, 0.75, 1]
+      threshold: [0, 0.001, 0.01, 0.1, 1]
     });
 
     EXCLUDED.forEach(el => io.observe(el));
 
-    // Initial pass (handles deep-linking past the intro)
-    // If none are in view yet, show; else hide/disable.
-    requestAnimationFrame(() => evaluate());
-  } else {
-    // Fallback: simple scroll check if IO isn't available
-    const inView = (el) => {
-      const r = el.getBoundingClientRect();
-      const vh = window.innerHeight || document.documentElement.clientHeight;
-      const vis = Math.max(0, Math.min(r.bottom, vh) - Math.max(r.top, 0));
-      return vis >= vh * 0.25; // ~25% visible
-    };
-    const onScroll = () => {
-      visibleExcluded.clear();
-      EXCLUDED.forEach(el => { if (inView(el)) visibleExcluded.add(el.id); });
+    // Initial pass (covers deep-links and first paint)
+    requestAnimationFrame(evaluate);
+
+    // Also enforce for the first second to beat any pin/scrub race
+    let guardFrames = 60;
+    const guard = () => {
       evaluate();
+      if (--guardFrames > 0) requestAnimationFrame(guard);
     };
-    window.addEventListener('scroll', onScroll, { passive: true });
-    window.addEventListener('resize', onScroll, { passive: true });
-    onScroll();
+    requestAnimationFrame(guard);
+
+    // If DOM mutates and sections appear later, re-observe them
+    const mo = new MutationObserver(() => {
+      const before = EXCLUDED.length;
+      requeryExcluded();
+      if (EXCLUDED.length !== before) {
+        io.disconnect();
+        EXCLUDED.forEach(el => io.observe(el));
+        evaluate();
+      }
+    });
+    mo.observe(document.documentElement, { childList: true, subtree: true });
   }
 
-  // Keep label synced after user toggles
-  btn.addEventListener("click", () => {
-    setTimeout(() => {
-      if (window.__micWind__?.isOn()) {
-        btn.textContent = "🛑 Disable Mic";
-      } else {
-        btn.textContent = forestSeenOnce ? "🌬️ Enable mic" : "🌬️ Enable mic for Forest";
-      }
-    }, 0);
-  });
+  attachIO();
 })();
+

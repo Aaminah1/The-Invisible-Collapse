@@ -43,7 +43,7 @@
     "images/cityfar_44.png"
   ];
 
-  const NEAR_REF = "images/constructioncityy_near.png";
+  const NEAR_REF = "images/constructioncity_near.png";
 
   /* Track whether the user has explicitly chosen a state via click.
      null = no override (allow scene logic), 'on' | 'off' = respect user choice. */

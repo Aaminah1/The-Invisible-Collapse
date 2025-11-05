@@ -15,6 +15,7 @@
   <link href="https://fonts.googleapis.com/css2?family=Special+Elite&family=Courier+Prime:wght@400;700&display=swap" rel="stylesheet">
 
   <!-- Styles -->
+     <link rel="stylesheet" href="mic-wind.css" />
   <link rel="stylesheet" href="bg.css" />
     <link rel="stylesheet" href="tractor.css" />
   <link rel="stylesheet" href="scene1.css" />
@@ -25,9 +26,8 @@
        <link rel="stylesheet" href="outro.css" />
 </head>
 <body>
-  <button id="micWindBtn" style="position:fixed; right:16px; bottom:16px; z-index:9999; padding:10px 14px; border:0; border-radius:10px; cursor:pointer; background:#0a0a0d; color:#e6e6f0; font:600 14px/1 system-ui; box-shadow:0 6px 20px rgba(0,0,0,.25); opacity:.9">
-    🌬️ Breathe into mic
-  </button>
+  <button id="micWindBtn" aria-pressed="false"></button>
+
 
   <!-- Fixed background (separate, never inside a scene) -->
   <div id="bg">
