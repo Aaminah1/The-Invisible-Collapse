@@ -91,7 +91,7 @@
       update(progress){
         const p = Math.max(0, Math.min(1, progress));
         let dps;
-        if (p < 0.30) dps = lerp(0,   220, p/0.30);           // drizzle builds
+        if (p < 0.30) dps = lerp(0,   220, p/0.30);             // drizzle builds
         else if (p < 0.50) dps = lerp(220, 420, (p-0.30)/0.20); // heaviest band
         else if (p < 0.80) dps = lerp(420,  90, (p-0.50)/0.30); // taper
         else dps = lerp(90, 10, (p-0.80)/0.20);                 // almost none
@@ -179,32 +179,53 @@
     }
   }
 
-  /* ========================= SPLASHES ========================= */
+  /* ========================= SPLASHES (gentler) ========================= */
   function spawnSplash(x, y, strength=1){
-    // jets
-    const jets = 4 + Math.floor(4*strength);
+    // Clamp & soften strength so heavy hits don’t explode
+    const k = Math.max(0, Math.min(1, strength * 0.7)); // compress intensity
+
+    // Fewer particles overall
+    const jets = 2 + Math.floor(2 * k);   // 2 → 4
+    const dots = 4 + Math.floor(6 * k);   // 4 → 10
+
+    // Narrower spray + lower speeds
+    const angSpread = 0.28 + 0.10 * k;    // tighter fan
+    const jetBase   = 140 + 90 * k;       // slower jets
+    const dotHx     = 70  + 110 * k;      // narrower horizontal scatter
+    const dotVy     = 60  + 110 * k;      // softer upward pop
+
+    // Smaller, softer, fade quicker
+    const rJet = (0.55 + 0.55 * k) * (0.9 + Math.random()*0.3);
+    const rDot = (0.40 + 0.55 * k) * (0.9 + Math.random()*0.3);
+    const aJet = 0.56 + 0.24 * k;         // lower alpha
+    const aDot = 0.48 + 0.28 * k;
+    const fadeJet = 0.86 + 0.05 * k;      // faster fade than before
+    const fadeDot = 0.88 + 0.04 * k;
+
+    // Jets (contained)
     for (let i=0;i<jets;i++){
-      const ang = (-Math.PI/2) + (Math.random()-0.5)*0.9;
-      const spd = 220 + Math.random()*180 * (0.6 + 0.6*strength);
+      const ang = (-Math.PI/2) + (Math.random()-0.5)*angSpread;
+      const spd = jetBase + Math.random()*60*k;
       splashes.push({
         x, y,
         vx: Math.cos(ang)*spd,
         vy: Math.sin(ang)*spd,
-        r:  1 + Math.random()*1.2,
-        a:  0.8,
-        kind: "jet"
+        r:  rJet,
+        a:  aJet,
+        kind: "jet",
+        fade: fadeJet
       });
     }
-    // dots
-    const dots = 8 + Math.floor(10*strength);
+    // Dots (tight, soft)
     for (let i=0;i<dots;i++){
-      const vx = (Math.random()-0.5) * (120 + 220*strength);
-      const vy = - (120 + Math.random()*160) * (0.6 + 0.6*strength);
+      const vx = (Math.random()-0.5) * (dotHx * 0.8);
+      const vy = - (dotVy + Math.random()*80*k) * 0.6;
       splashes.push({
         x, y, vx, vy,
-        r:  0.6 + Math.random()*1.1,
-        a:  0.9,
-        kind: "dot"
+        r:  rDot,
+        a:  aDot,
+        kind: "dot",
+        fade: fadeDot
       });
     }
   }
@@ -248,7 +269,9 @@
       // ground collision → splash and recycle
       if (groundTopY != null && d.y >= groundTopY){
         const speedK = Math.min(1, d.vy / 900);
-        spawnSplash(d.x, groundTopY, 0.4 + 0.8*speedK);
+        // gentler mapping into spawn strength, also clamped inside spawn
+        const splashK = 0.30 + 0.70 * speedK; // 0.30→1.00
+        spawnSplash(d.x, groundTopY, splashK);
 
         drops[i] = drops[drops.length-1];
         drops.pop();
@@ -269,25 +292,25 @@
     for (let i=0;i<splashes.length;i++){
       const p = splashes[i];
 
-      // motion (light gravity + drag)
-      p.vy += 900 * dt * 0.9;
-      p.vx *= 0.98;
-      p.vy *= 0.98;
+      // motion (gentler gravity + stronger damping to keep things tidy)
+      p.vy += 700 * dt * 0.9;   // was 900 → softer
+      p.vx *= 0.975;            // was 0.98  → more damping
+      p.vy *= 0.975;            // was 0.98
       p.x  += p.vx * dt;
       p.y  += p.vy * dt;
 
       // fade
-      p.a *= (p.kind === "jet" ? 0.88 : 0.90);
+      p.a *= (p.fade != null) ? p.fade : 0.86;
 
       sctx.globalAlpha = Math.max(0, Math.min(1, p.a));
       sctx.beginPath();
       sctx.arc(p.x, p.y, p.r, 0, Math.PI*2);
       sctx.fillStyle = (p.kind === "jet")
-        ? "rgba(210,220,235,0.9)"
-        : "rgba(200,210,230,0.9)";
+        ? "rgba(210,220,235,0.82)"
+        : "rgba(200,210,230,0.78)";
       sctx.fill();
 
-      if (p.a < 0.05 || (groundTopY != null && p.y > groundTopY + 24)){
+      if (p.a < 0.05 || (groundTopY != null && p.y > groundTopY + 20)){
         splashes[i] = splashes[splashes.length-1];
         splashes.pop();
         i--;

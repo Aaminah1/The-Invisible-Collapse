@@ -3643,7 +3643,9 @@ ScrollTrigger.create({
     
 window.__currentProgress = forestP;
 if (window.__rain) window.__rain.update(forestP);
+
 if (window.__clouds)  window.__clouds.setStageProgress(forestP); 
+
     // --- add this block just after you compute forestP ---
 window.__enteredForestOnce__ ??= true;  // init
 if (forestP < 1) {

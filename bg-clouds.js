@@ -158,6 +158,7 @@ const aK = Math.max(0.75, clamp(L.alpha(stageProgress, rainProgress), 0.25, 1));
 
   /* ======= main loop ======= */
   let last = performance.now(), spawnAcc = 0;
+  let seeded = false;
   function loop(now = performance.now()){
     requestAnimationFrame(loop);
     const dt = Math.min(0.05, (now-last)/1000); last = now;
@@ -167,6 +168,17 @@ const aK = Math.max(0.75, clamp(L.alpha(stageProgress, rainProgress), 0.25, 1));
 
     // spawn: distribute across layers by current density
   const totalDensity = LAYERS.reduce((s,L)=>s + L.density(stageProgress, rainProgress), 0);
+  // === one-time seeding for fast scrolls ===
+if (!seeded && stageProgress >= 0.7) {
+  const targetCount = Math.round(lerp(18, 26, rainProgress));
+  for (let i = 0; i < targetCount; i++) spawnCloud();
+  seeded = true;
+  // lock the early clouds into calmer drift
+  clouds.forEach(c => {
+    c.vx *= 0.3;
+    c.vy *= 0.3;
+  });
+}
 
 // As we approach Bare, ramp spawning down to 0.
 const barePhase = smooth01((stageProgress - BARE_LOCK) / (BARE_STOP - BARE_LOCK)); // 0..1
