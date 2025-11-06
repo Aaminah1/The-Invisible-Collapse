@@ -49,7 +49,7 @@
 /* each tree wrapper sits on the “ground” and can be nudged X and Y */
 .tree-wrap{
   position: absolute;
-  bottom: var(--y, 0px);                             /* per-tree raise */
+   bottom: calc(var(--y, 0px) - 12px);                             /* per-tree raise */
   transform: translateX(calc(-50% + var(--dx,0px)));/* per-tree nudge */
   display: inline-block;
    transform-origin: bottom center;
@@ -57,7 +57,7 @@
 
 .tree, .tree-back{
   object-fit: contain;
-  transform-origin: bottom center;
+  transform-origin: 50% calc(100% + 0px);
   opacity: 0;
   clip-path: inset(100% 0 0 0);
   will-change: transform, opacity, clip-path, filter;

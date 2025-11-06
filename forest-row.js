@@ -3,10 +3,10 @@ gsap.registerPlugin(ScrollTrigger);
 gsap.config({ nullTargetWarn: false });
 /* ---------- assets ---------- */
 const SRC = {
-  full: "images/Tree-Full1.png",
-  mid1: "images/Tree-Mid11.png",
-  mid2: "images/Tree-Mid21.png",
-  bare: "images/Tree-Bare1.png"
+  full: "images/Tree-Full11.png",
+  mid1: "images/Tree-Mid111.png",
+  mid2: "images/Tree-Mid211.png",
+  bare: "images/Tree-Bare11.png"
 };
 // how much higher (in px) to spawn above the canopy band
 const PICKUP_SPAWN_LIFT = {
@@ -322,20 +322,39 @@ function leavesAllowedForProgress(p){
 
 
 /* ---------- GSAP breathing ---------- */
+/* ---------- GSAP breathing (clearer but still subtle) ---------- */
 let breatheTL = null;
 function startBreathing(){
   if (breatheTL) return;
+
+  const T = 2.1; // faster cycle (was ~3s)
+
   breatheTL = gsap.timeline({ repeat: -1, yoyo: true });
-  breatheTL.to(".tree-back, .tree", {
-    y: "+=6",
-    rotation: "+=0.25",
-    duration: 3,
+
+  // Make ALL stages breathe: trunk, back row, and overlays
+  breatheTL.to("#forestReveal .tree, #forestReveal .tree-back, #forestReveal .tree-stage", {
+    // slightly larger but still gentle
+    y: "+=8",             // was +=2
+    rotation: "+=0.35",   // was +=0.25
+    skewX: "+=0.18",      // tiny bend so it reads more than pure up/down
+    duration: T,
     ease: "sine.inOut",
-    stagger: { each: 0.12, from: "random" }
+    // micro desync so the row doesn’t move as one block
+    stagger: { each: 0.10, from: "random" }
   });
+
+  // Optional tiny luminance pulse only on leaves/stage overlays (adds “breath” feel)
+  breatheTL.to("#forestReveal .tree-stage", {
+    filter: "brightness(1.03) saturate(1.02)",
+    duration: T,
+    ease: "sine.inOut",
+    yoyo: true,
+    repeat: 1
+  }, "<"); // run in parallel with the motion tween
 }
 function pauseBreathing(){ if (breatheTL) breatheTL.pause(); }
 function resumeBreathing(){ if (breatheTL) breatheTL.resume(); }
+
 
 /* ---------- reveal (no vertical dip) ---------- */
 function setupReveal(){
@@ -838,8 +857,33 @@ window.__WIND__ = WIND; // expose to mic controller
     vB += aB * dt;
     xB += vB * dt;
 
-    gsap.set("#forestReveal .tree", { rotation: xF, transformOrigin:"50% 100%" });
-    gsap.set("#forestReveal .tree-back, #forestReveal .tree-stage", { rotation: xB, transformOrigin:"50% 100%" });
+ // put this inside the spring tick where rotation is applied
+const footLift = 0.60; // px dropped per degree to keep roots visually pinned
+
+// Foreground (trunk): rotate a bit less than canopy + bend + deeper anchor
+gsap.set("#forestReveal .tree", {
+  transformOrigin: "50% 125%",       // anchor ~25% below the foot
+  rotation: xF * 0.85,               // sturdier trunk
+  skewX:   xF * 0.28,                // gentle bend
+  y:       -Math.abs(xF) * footLift  // counter-drop so base doesn't rise
+});
+
+// Canopy overlays: sway slightly more than trunk so leaves “lag”
+gsap.set("#forestReveal .tree-stage", {
+  transformOrigin: "50% 125%",
+  rotation: xF,                       // full swing
+  skewX:   xF * 0.38,
+  y:       -Math.abs(xF) * footLift
+});
+
+// Back row: lighter motion for depth
+gsap.set("#forestReveal .tree-back", {
+  transformOrigin: "50% 125%",
+  rotation: xB * 0.75,
+  skewX:   xB * 0.22,
+  y:       -Math.abs(xB) * footLift
+});
+
 
     // keep ticking while moving/offset
     if (
@@ -867,8 +911,8 @@ window.__WIND__ = WIND; // expose to mic controller
     const mixed = Math.max(floor, (env * 0.88) + (fast * 0.18));
 
     // Map to degrees; foreground a bit stronger than background
-    const frontDeg = curve(mixed) * 3.4;
-    const backDeg  = curve(mixed) * 1.8;
+const frontDeg = curve(mixed) * 15;  // was 3.4
+const backDeg  = curve(mixed) * 10;   // was 1.8
 
     tF = frontDeg;
     tB = backDeg;
@@ -3597,7 +3641,8 @@ ScrollTrigger.create({
 
     // expose for any other code that reads it
     window.__currentProgress = forestP;
-
+window.__currentProgress = forestP;
+if (window.__rain) window.__rain.update(forestP);
     // --- add this block just after you compute forestP ---
 window.__enteredForestOnce__ ??= true;  // init
 if (forestP < 1) {

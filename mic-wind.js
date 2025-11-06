@@ -216,6 +216,11 @@ function setButtonLabel(btn, isOn){
     // Litter / Smoke hooks (safe if not present)
     window.__litterSetWind && window.__litterSetWind(windX * 1.8, Math.max(0, breathEnv - 0.25));
     window.__smokeSetWind  && window.__smokeSetWind(windX * 8.0);
+// Rain drift (optional): gently tilt rain by current wind
+if (window.__rain && window.__rain.setWind) {
+  // base drift from smoothed wind; tune 140–220 for more/less slant
+  window.__rain.setWind((window.__WIND__.x || 0) * 260);
+}
 
     const boost = {
       mult: 1.0 + breathEnv * 1.8 + Math.max(0, (breathFast - breathEnv * 0.7)) * 0.8,
@@ -230,6 +235,11 @@ function setButtonLabel(btn, isOn){
 
     if (isBurst) {
       window.__litterBurst && window.__litterBurst(0.9 + (Math.max(0, breathFast - breathEnv * 0.7) * 0.8));
+
+      // quick gust: add a stronger, brief push on bursts
+if (window.__rain && window.__rain.setWind) {
+  window.__rain.setWind((window.__WIND__.x || 0) * 320);
+}
       if (window.__smokeSetBoost) {
         const burst = { mult:1.8, speed:1.4, spread:1.2, wind:1.3, alpha:0.15, lift:1.1 };
         window.__smokeSetBoost(burst);
@@ -242,7 +252,8 @@ function setButtonLabel(btn, isOn){
       const hz = 0.35 + 0.45 * breathEnv;
       window.__breathPhase__ += hz * (1/60);
       const phase = Math.sin(window.__breathPhase__ * Math.PI * 2);
-      window.__treesMicSway__((0.5 + 0.5 * phase) * breathEnv * 1.9);
+window.__treesMicSway__((0.5 + 0.5 * phase) * breathEnv * 3.0);
+
     }
     if (window.__leavesMicResponse__) {
       const leafStrength = clamp01(breathEnv * 1.2 + (Math.max(0, breathFast - breathEnv * 0.7)) * 1.8);
@@ -255,6 +266,10 @@ function setButtonLabel(btn, isOn){
   async function enableMic(btn){
     // Toggle OFF (→ "Share your breath")
     if (enabled) {
+
+      // …existing OFF cleanup…
+if (window.__rain && window.__rain.setWind) window.__rain.setWind(0);
+
       enabled = false;
       window.__micWindState__.isOn = false;
 
