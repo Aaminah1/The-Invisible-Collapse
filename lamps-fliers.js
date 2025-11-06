@@ -8,6 +8,12 @@
   let lastSeg=-1;
   let nextSpawn={ plane:0, drone:0 };
   const cursor={ x:-1, y:-1 };
+// --- FLIER ALTITUDE CONFIG (spawn band in the sky) -------------------------
+const ALTITUDE = {
+  topFrac: 0.12,  // higher = closer to top (was ~0.30)
+  botFrac: 0.36,  // lower edge of the band (was ~0.55)
+  marginPx: 24    // keep clear of ground/edges
+};
 
   // --- wreck physics (settle on ground instead of popping static) ---
   const WRECK_FRICTION = 0.90;
@@ -444,10 +450,21 @@
     built = true;
   }
 
-  function lampBand(){
-    const y1 = h*0.30, y2 = h*0.55;
-    return { x1: -40, x2: w+40, y1, y2 };
-  }
+
+function lampBand(){
+  // Where is the ground? (already defined in your file)
+  const gy = groundY();                   // pixel Y for ground surface
+  const skyH = Math.max(40, gy - ALTITUDE.marginPx); // usable sky height
+
+  // Clamp helper (re-use yours if it already exists)
+  const clamp = (a,v,b)=>Math.max(a,Math.min(b,v));
+
+  // Compute a higher band inside the sky (fractions of sky height)
+  const y1 = clamp(8,  skyH * ALTITUDE.topFrac,  skyH - 20);
+  const y2 = clamp(y1+10, skyH * ALTITUDE.botFrac, skyH - 10);
+
+  return { x1: -40, x2: w+40, y1, y2 };
+}
 
   function makePlane(){
     const band = lampBand();
@@ -1010,11 +1027,19 @@
     requestAnimationFrame(loop);
   }
 
+  function setAltitude(topFrac, botFrac){
+  const clamp=(a,v,b)=>Math.max(a,Math.min(b,v));
+  if (typeof topFrac === "number") ALTITUDE.topFrac = clamp(0.00, topFrac, 0.95);
+  if (typeof botFrac === "number") ALTITUDE.botFrac = clamp(ALTITUDE.topFrac + 0.05, botFrac, 0.98);
+}
+
   // public API
   function setScene(idx){ currentScene = (idx|0); }
   function setProgress(t){ sceneProg = clamp(0, +t||0, 1); }
   function setEnabled(pinned){ lampsPinned = !!pinned; }
   function update(){ if (!built) build(); }
 
-  window.__lampFliers = { setScene, setProgress, setEnabled, update, build };
+window.__lampFliers = { setScene, setProgress, setEnabled, update, build, setAltitude };
+
+  
 })();
