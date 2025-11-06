@@ -1,4 +1,4 @@
-// js/bg-clouds-storm.js — Clouds (ominous Bare) + Lightning/Thunder visuals + exposure flash
+// js/bg-clouds-storm-v2.js — Living Clouds + Storm (bolts) + strike-coupled reactions
 (() => {
 
 /* =========================================================
@@ -10,7 +10,7 @@ const ease=(t)=>t*t*(3-2*t);
 function smooth01(t){ return t<=0?0 : t>=1?1 : t*t*(3-2*t); }
 
 /* =========================================================
-   CLOUDS — stratified painterly deck with "Bare" dread
+   CLOUDS — stratified painterly deck with living motion
 ========================================================= */
 (function Clouds(){
   let built=false, wrap, cvs, ctx, w=0, h=0, dpr=1;
@@ -25,7 +25,15 @@ function smooth01(t){ return t<=0?0 : t>=1?1 : t*t*(3-2*t); }
   let rainProgress = 0;    // 0..1 rain intensity
   let stageProgress = 0;   // 0..1 Full→Bare
   let lastStageProbe = 0;
+
+  // base wind (scene-level) and layer differential wind
   let windX = 0, windTarget = 0;
+  const WIND_EASE  = 0.06;
+  const LAYER_WIND = { TOP: 0.9, MID: 1.0, LOW: 1.15 }; // multipliers
+
+  // strike reaction
+  let strikeShakeT = 0;      // 0..1 decay for micro jitter
+  let strikeFlashT = 0;      // 0..1 decay for cloud brightness lift
 
   // offscreen tint buffer
   let off = document.createElement('canvas');
@@ -49,7 +57,6 @@ function smooth01(t){ return t<=0?0 : t>=1?1 : t*t*(3-2*t); }
   ];
   const BASE_SPAWN = 1;      // total clouds/sec (distributed across layers)
   const MAX_CLOUDS = 30;
-  const WIND_EASE  = 0.06;
 
   // heavier/colder tint as Bare approaches
   function darkFactor(st, rain){
@@ -112,6 +119,13 @@ function smooth01(t){ return t<=0?0 : t>=1?1 : t*t*(3-2*t); }
     built = true; loop();
     // also build storm wrapper once (layer sits above clouds)
     ensureStormDOM();
+
+    // listen for storm strikes (reactive motion + brightness)
+    window.addEventListener('storm-strike', (ev)=>{
+      const p = (ev && ev.detail && ev.detail.power) ? ev.detail.power : 1;
+      strikeShakeT = Math.min(1, strikeShakeT + 0.9*p); // big bump
+      strikeFlashT = Math.min(1, strikeFlashT + 0.9*p);
+    });
   }
 
   function onResize(){
@@ -124,7 +138,6 @@ function smooth01(t){ return t<=0?0 : t>=1?1 : t*t*(3-2*t); }
   }
 
   function pickLayer(){
-    // weight by target densities at this moment
     const weights = LAYERS.map(L=>Math.max(0.0001, L.density(stageProgress, rainProgress)));
     const sum = weights.reduce((a,b)=>a+b,0);
     let r = Math.random()*sum, idx=0;
@@ -138,7 +151,6 @@ function smooth01(t){ return t<=0?0 : t>=1?1 : t*t*(3-2*t); }
     const L    = scud ? LAYERS[2] : pickLayer();
 
     const sc   = scud ? lerp(0.22, 0.38, Math.random()) : lerp(0.38, 0.88, Math.random());
-    const rot  = lerp(-4, 4, Math.random()) * Math.PI/180;
     const flip = Math.random()<0.5? -1: 1;
 
     // start above band so it “grows” downward
@@ -146,12 +158,32 @@ function smooth01(t){ return t<=0?0 : t>=1?1 : t*t*(3-2*t); }
     const y0   = (bandY - 120) - Math.random()*160;
     const x0   = Math.random()*innerWidth;
 
+    // base drift
     const vx   = (scud ? lerp(-36, 46, Math.random()) : lerp(-16, 16, Math.random()));
     const vy   = (scud ? lerp(10, 24, Math.random())  : lerp(4, 10, Math.random()));
+
+    // idle “breathing” oscillation (unique per cloud)
+    const idle = {
+      ax: Math.random()*Math.PI*2,
+      ay: Math.random()*Math.PI*2,
+      as: Math.random()*Math.PI*2,
+      // amplitude in px / scale variation
+      dx: lerp(2, 10, Math.random()),    // x wobble
+      dy: lerp(2, 12, Math.random()),    // y wobble
+      ds: lerp(0.002, 0.012, Math.random()), // scale wobble
+      // periods (seconds)
+      px: lerp(5, 12, Math.random()),
+      py: lerp(6, 14, Math.random()),
+      ps: lerp(7, 16, Math.random()),
+    };
+
+    // per-cloud tiny noise jitter (updated on strikeShake)
+    let jitter = { x:0, y:0 };
+
     const a    = 0;
     const aK   = Math.max(0.75, clamp(L.alpha(stageProgress, rainProgress), 0.25, 1));
 
-    clouds.push({ img, x:x0, y:y0, vx, vy, sc, a, dark:0, rot, flip, aK, layer:L, scud });
+    clouds.push({ img, x:x0, y:y0, vx, vy, sc, a, dark:0, rot:0, flip, aK, layer:L, scud, idle, jitter });
     if (clouds.length > MAX_CLOUDS) clouds.shift();
   }
 
@@ -172,7 +204,7 @@ function smooth01(t){ return t<=0?0 : t>=1?1 : t*t*(3-2*t); }
     ctx.restore();
   }
 
-  // optional: slow occlusion pulse (heavy mass overhead)
+  // occlusion pulse (heavy mass overhead)
   let occlT=0, nextOcclAt=performance.now()+2000+Math.random()*4000;
   function maybeOcclusionPulse(now){
     if (stageProgress < 0.76) return;
@@ -183,7 +215,7 @@ function smooth01(t){ return t<=0?0 : t>=1?1 : t*t*(3-2*t); }
   function applyOcclusionPulse(dt){
     if (occlT<=0) return 0;
     occlT = Math.max(0, occlT - dt*0.5);
-    return 0.06 * ease(occlT); // peak ~6%
+    return 0.06 * ease(occlT);
   }
 
   /* ======= public API ======= */
@@ -209,6 +241,10 @@ function smooth01(t){ return t<=0?0 : t>=1?1 : t*t*(3-2*t); }
   function loop(now = performance.now()){
     requestAnimationFrame(loop);
     const dt = Math.min(0.05, (now-last)/1000); last = now;
+
+    // strike reaction decays
+    strikeShakeT = Math.max(0, strikeShakeT - dt*3.8); // fast decay
+    strikeFlashT = Math.max(0, strikeFlashT - dt*4.6);
 
     // wind easing
     windX += (windTarget - windX) * WIND_EASE;
@@ -251,21 +287,43 @@ function smooth01(t){ return t<=0?0 : t>=1?1 : t*t*(3-2*t); }
       const deckDrop = 12 * Math.max(0, (stageProgress-0.7)/0.3);
       const stillK = smooth01((stageProgress - 0.66) / 0.34);   // 0..1: fades to still in Bare
       const baseY  = innerHeight * c.layer.yFrac + deckDrop;
+
+      // idle oscillation (keeps life even in Bare)
+      c.idle.ax += (2*Math.PI / c.idle.px) * dt;
+      c.idle.ay += (2*Math.PI / c.idle.py) * dt;
+      c.idle.as += (2*Math.PI / c.idle.ps) * dt;
+      const ox = Math.sin(c.idle.ax) * c.idle.dx * (1 - stillK*0.7); // damp but not zero
+      const oy = Math.cos(c.idle.ay) * c.idle.dy * (1 - stillK*0.7);
+      const os = Math.sin(c.idle.as) * c.idle.ds * (1 - stillK*0.6);
+
+      // per-layer differential wind (faster lower deck)
+      const layerMult = LAYER_WIND[c.layer.key] || 1;
+      const windTerm = (windX * 0.02 * layerMult) * (1 - stillK);
+
+      // micro jitter on strike (shockwave-like)
+      const jitterAmp = strikeShakeT * (c.scud ? 0.8 : 1.0) * 3.2; // px
+      c.jitter.x = (Math.random()*2-1) * jitterAmp;
+      c.jitter.y = (Math.random()*2-1) * jitterAmp;
+
+      // target y with mild jiggle (retain original “jitter” feel)
       const jig    = c.layer.jitter * (1 - stillK);
       const ty     = baseY + Math.sin((now * 0.001) + c.x * 0.02) * jig;
 
-      // Drift towards no motion as we near Bare
+      // drift towards no motion as we near Bare (but not fully)
       const FREEZE_EASE = 0.10;
       c.vx  += (-c.vx)  * stillK * FREEZE_EASE;
       c.vy  += (-c.vy)  * stillK * FREEZE_EASE;
-      c.rot += (-c.rot) * stillK * FREEZE_EASE;
 
-      // Integrate, with wind fading out in Bare
-      c.y += ((ty - c.y) * 0.06) + c.vy * dt;
-      c.x += (c.vx + windX * 0.02 * (1 - stillK)) * dt;
+      // integrate
+      c.y += ((ty - c.y) * 0.06) + c.vy * dt + oy * dt;
+      c.x += (c.vx + windTerm) * dt + ox * dt;
+
+      // subtle rotation from wind & oscillation
+      const targetRot = (windTerm*0.04) + (ox*0.002);
+      c.rot += (targetRot - c.rot) * 0.06;
 
       // fade & darken
-      const targetA = c.aK;
+      const targetA = c.aK + os*0.6; // tiny alpha wobble via scale phase
       const alphaEase = stageProgress >= BARE_LOCK ? 0.015 : 0.04;
       c.a += (targetA - c.a) * alphaEase;
 
@@ -278,8 +336,9 @@ function smooth01(t){ return t<=0?0 : t>=1?1 : t*t*(3-2*t); }
 
       // render (offscreen tint)
       if (c.a > 0.01){
-        const wpx = Math.max(2, Math.round(c.img.width  * c.sc));
-        const hpx = Math.max(2, Math.round(c.img.height * c.sc));
+        const baseScale = Math.max(0.1, c.sc + os); // include scale wobble
+        const wpx = Math.max(2, Math.round(c.img.width  * baseScale));
+        const hpx = Math.max(2, Math.round(c.img.height * baseScale));
 
         off.width  = wpx;
         off.height = hpx;
@@ -299,7 +358,7 @@ function smooth01(t){ return t<=0?0 : t>=1?1 : t*t*(3-2*t); }
 
         // main draw
         ctx.save();
-        ctx.translate(Math.round(c.x), Math.round(c.y));
+        ctx.translate(Math.round(c.x + c.jitter.x), Math.round(c.y + c.jitter.y));
         ctx.scale(c.flip, 1);
         ctx.rotate(c.rot);
 
@@ -308,10 +367,11 @@ function smooth01(t){ return t<=0?0 : t>=1?1 : t*t*(3-2*t); }
         ctx.shadowBlur  = 20;
         ctx.shadowOffsetY = 3;
 
-        ctx.globalAlpha = c.a;
-        // slight desat/contrast in Bare overall feel
+        // brightness lift on strike
+        const flashLift = 1 + (0.22 * strikeFlashT);
         const globalDesat = lerp(1, 0.85, Math.max(0, (stageProgress-0.75)/0.25));
-        ctx.filter = `saturate(${globalDesat}) contrast(1.10) brightness(0.88)`;
+        ctx.globalAlpha = c.a;
+        ctx.filter = `saturate(${globalDesat}) contrast(1.10) brightness(${0.88*flashLift})`;
 
         ctx.drawImage(off, Math.round(-wpx/2), Math.round(-hpx/2));
 
@@ -451,6 +511,10 @@ function ensureStormDOM(){
     // exposure + micro shake
     exposureFlash();
     microShake(lerp(1,3,power), 180);
+
+    // notify clouds to react (shake/brighten)
+    const ev = new CustomEvent('storm-strike', { detail:{ power } });
+    window.dispatchEvent(ev);
   }
 
   function loop(now=performance.now()){
@@ -521,7 +585,6 @@ function ensureStormDOM(){
 ========================================================= */
 (function AutoWire(){
   // If you already update these elsewhere, this is safe/no-op.
-  // Here we map storm severity to late Bare by default.
   const T = setInterval(()=>{
     if (typeof window.__clouds === 'undefined' || typeof window.__storm === 'undefined') return;
     // pull stage progress if present
