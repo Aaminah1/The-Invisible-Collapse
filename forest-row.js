@@ -3640,9 +3640,10 @@ ScrollTrigger.create({
     const forestP = Math.min(p / FOREST_PORTION, 1);
 
     // expose for any other code that reads it
-    window.__currentProgress = forestP;
+    
 window.__currentProgress = forestP;
 if (window.__rain) window.__rain.update(forestP);
+if (window.__clouds)  window.__clouds.setStageProgress(forestP); 
     // --- add this block just after you compute forestP ---
 window.__enteredForestOnce__ ??= true;  // init
 if (forestP < 1) {
