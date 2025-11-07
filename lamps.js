@@ -113,7 +113,6 @@
   const DEFAULT_PHYS = { g:0.90, air:0.014, turb:0.55, lift:0.002, spin:1.00, groundFriction:0.94, rotFriction:0.96, impact:0.70, cursor:1.00 };
 
 /* ================== LITTER CANVAS ================== */
-/* ================== LITTER CANVAS ================== */
 (() => {
   // --- screen-edge walls for litter ---
   const WALL_MARGIN   = 12;   // how close to the edge before we clamp/bounce
@@ -1283,35 +1282,33 @@ function renderSoot(ctx, W, H){
 
     // Emitters (scenes 0–2)
     window.__SMOKE_EMITTERS[0] = [
-      { xPct: 5,  yPct: 50, rate: 14, depth: 'far' },
-      { xPct: 73, yPct: 68, rate: 16, depth: 'near' },
-      { xPct: 92, yPct: 51, rate: 14, depth: 'far' },
+      { xPct: 5,  yPct: 62, rate: 14, depth: 'far' },
+      { xPct: 61, yPct: 49, rate: 16, depth: 'near' },
+      { xPct: 94, yPct: 45, rate: 14, depth: 'far' },
     ];
     window.__SMOKE_EMITTERS[1] = [
-      { xPct: 16, yPct: 48, rate: 18, depth: 'near' },
-      { xPct: 66, yPct: 49, rate: 20, depth: 'near' },
-      { xPct: 41, yPct: 50, rate: 18, depth: 'near' },
-      { xPct: 86, yPct: 50, rate: 10, depth: 'near' },
-      { xPct: 22, yPct: 17, rate: 26, depth: 'far' },
-      { xPct: 85, yPct: 16, rate: 26, depth: 'far' },
-      { xPct: 56, yPct: 32, rate: 20, depth: 'far' },
-      { xPct: 51, yPct: 32, rate: 20, depth: 'far' },
+      { xPct: 8, yPct: 39, rate: 18, depth: 'near' },
+      { xPct: 66, yPct: 38, rate: 20, depth: 'near' },
+      { xPct: 23, yPct: 40, rate: 18, depth: 'near' },
+      { xPct: 86, yPct: 72, rate: 1, depth: 'far' },
+
+      { xPct: 70, yPct: 20, rate: 6, depth: 'far' },
+      { xPct: 57, yPct: 36, rate: 7, depth: 'far' },
+     
     ];
     window.__SMOKE_EMITTERS[2] = [
-      { xPct: 16, yPct: 48, rate: 30, depth: 'near' },
-      { xPct: 66, yPct: 49, rate: 28, depth: 'near' },
-      { xPct: 41, yPct: 50, rate: 24, depth: 'near' },
-      { xPct: 86, yPct: 50, rate: 30, depth: 'near' },
-      { xPct: 22, yPct: 17, rate: 60, depth: 'far' },
-      { xPct: 85, yPct: 16, rate: 30, depth: 'far' },
-      { xPct: 56, yPct: 32, rate: 40, depth: 'far' },
-      { xPct: 51, yPct: 32, rate: 30, depth: 'far' },
-      { xPct: 60, yPct: 20, rate: 30, depth: 'far' },
-      { xPct: 70, yPct: 12, rate: 30, depth: 'far' },
-      { xPct: 80, yPct: 22, rate: 30, depth: 'far' },
-      { xPct: 65, yPct: 27, rate: 30, depth: 'far' },
-      { xPct: 77, yPct: 18, rate: 30, depth: 'far' },
-      { xPct: 48, yPct: 10, rate: 30, depth: 'far' },
+    
+      { xPct: 16, yPct: 22, rate: 15, depth: 'far' },
+      { xPct: 88, yPct: 22, rate: 17, depth: 'far' },
+      { xPct: 57, yPct: 42, rate: 20, depth: 'far' },
+      
+      { xPct: 28, yPct: 19, rate: 20, depth: 'far' },
+       { xPct: 21, yPct: 45, rate: 20, depth: 'far' },
+      { xPct: 71, yPct: 30, rate: 10, depth: 'far' },
+    
+      { xPct: 65, yPct: 29, rate: 10, depth: 'far' },
+      { xPct: 78, yPct: 27, rate: 10, depth: 'far' },
+      { xPct: 37, yPct: 40, rate: 10, depth: 'far' },
     ];
 
     setLampConfig("#lampsScene", LANTERN_CFG);
