@@ -778,16 +778,121 @@ if (kind==="twig"){
   }
 }
 
+/* ---------- Tail lock: keep trail layers fixed to the viewport during tail ---------- */
+let __tailLocked = false;
+function lockTailLayers(on){
+  if (__tailLocked === on) return;
+  __tailLocked = on;
+  const ids = ["ground", "leafCanvas", "tractorLayer"];
+  ids.forEach(id => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    if (on){
+      // remember inline style so we can restore
+      el.dataset.prevStyle = el.getAttribute("style") || "";
+      // fix to viewport so it can't float away while user fast-scrolls
+      el.style.position = "fixed";
+      el.style.left = "0";
+      el.style.right = "0";
+      el.style.bottom = "0";
+      el.style.width = "100%";
+      el.style.pointerEvents = (id === "leafCanvas" ? "none" : (el.style.pointerEvents || ""));
+      el.style.willChange = "transform, opacity";
+      // if your ground image isn’t bottom-aligned, also set translateY to match your layout.
+    } else {
+      // restore original inline style
+      if (el.dataset.prevStyle !== undefined){
+        el.setAttribute("style", el.dataset.prevStyle);
+        delete el.dataset.prevStyle;
+      } else {
+        el.removeAttribute("style");
+      }
+    }
+  });
+}
 
+// NEW: central applier that always adds the temporary shake offsets
+function setTreeTransforms(xF = 0, xB = 0){
+  const footLift = 0.60;
+
+  document.querySelectorAll("#forestReveal .tree").forEach(el=>{
+    const cs = getComputedStyle(el);
+    const sd = parseFloat(cs.getPropertyValue("--shakeDeg")) || 0;
+    const sy = parseFloat(cs.getPropertyValue("--shakeY"))   || 0;
+    gsap.set(el, {
+      transformOrigin: "50% 125%",
+      rotation: (xF * 0.85) + sd,
+      skewX:    (xF * 0.28),
+      y:        (-Math.abs(xF) * footLift) + sy
+    });
+  });
+
+  document.querySelectorAll("#forestReveal .tree-stage").forEach(el=>{
+    const cs = getComputedStyle(el);
+    const sd = parseFloat(cs.getPropertyValue("--shakeDeg")) || 0;
+    const sy = parseFloat(cs.getPropertyValue("--shakeY"))   || 0;
+    gsap.set(el, {
+      transformOrigin: "50% 125%",
+      rotation: xF + sd,
+      skewX:    (xF * 0.38),
+      y:        (-Math.abs(xF) * footLift) + sy
+    });
+  });
+
+  document.querySelectorAll("#forestReveal .tree-back").forEach(el=>{
+    const cs = getComputedStyle(el);
+    const sd = parseFloat(cs.getPropertyValue("--shakeDeg")) || 0;
+    const sy = parseFloat(cs.getPropertyValue("--shakeY"))   || 0;
+    gsap.set(el, {
+      transformOrigin: "50% 125%",
+      rotation: (xB * 0.75) + sd,
+      skewX:    (xB * 0.22),
+      y:        (-Math.abs(xB) * footLift) + sy
+    });
+  });
+}
 
 function shakeTree(wrap){
   const kids = wrap.querySelectorAll(".tree, .tree-back, .tree-stage");
-  gsap.fromTo(kids,
-    { rotation: -1 },
-    { rotation: 1, duration: 0.06, repeat: 8, yoyo: true,
-      ease: "sine.inOut", transformOrigin: "bottom center" }
-  );
+  kids.forEach(el => {
+    el.style.setProperty("--shakeDeg", "0");
+    el.style.setProperty("--shakeY",   "0");
+  });
+
+  // Start a short-lived applier so shake shows even if mic loop is idle.
+  let live = true;
+  (function applyDuringShake(){
+    if (!live) return;
+    // base=0 so we only layer the temporary shake; mic loop (if on) will just overwrite with xF/xB
+    setTreeTransforms(0, 0);
+    requestAnimationFrame(applyDuringShake);
+  })();
+
+  // Floaty, decaying sway (no harsh yoyo)
+  const tl = gsap.timeline({
+    defaults: { ease: "sine.inOut" },
+    onComplete(){
+      live = false;
+      kids.forEach(el=>{
+        el.style.removeProperty("--shakeDeg");
+        el.style.removeProperty("--shakeY");
+      });
+      // one last apply to settle to base
+      setTreeTransforms(0, 0);
+    }
+  });
+
+  // amplitude you like; keep small so it reads as a rustle, not a shove
+  const deg1 = 3.0, deg2 = 2.2, deg3 = 1.4, deg4 = 0.6;
+  const y1   =  2.0, y2   = 1.4, y3   = 0.9, y4   = 0.4;
+
+  tl.to(kids, { duration: 0.18,  "--shakeDeg":  deg1,  "--shakeY":  y1 })
+    .to(kids, { duration: 0.20,  "--shakeDeg": -deg2,  "--shakeY":  y2 })
+    .to(kids, { duration: 0.22,  "--shakeDeg":  deg3,  "--shakeY":  y3 })
+    .to(kids, { duration: 0.26,  "--shakeDeg": -deg4,  "--shakeY":  y4 })
+    .to(kids, { duration: 0.28,  "--shakeDeg":  0.0,   "--shakeY":  0.0 });
 }
+
 
 
 function attachTreeClicks(){
@@ -858,31 +963,49 @@ window.__WIND__ = WIND; // expose to mic controller
     xB += vB * dt;
 
  // put this inside the spring tick where rotation is applied
-const footLift = 0.60; // px dropped per degree to keep roots visually pinned
+// put this inside the spring tick where rotation is applied
+const footLift = 0.60;
 
-// Foreground (trunk): rotate a bit less than canopy + bend + deeper anchor
-gsap.set("#forestReveal .tree", {
-  transformOrigin: "50% 125%",       // anchor ~25% below the foot
-  rotation: xF * 0.85,               // sturdier trunk
-  skewX:   xF * 0.28,                // gentle bend
-  y:       -Math.abs(xF) * footLift  // counter-drop so base doesn't rise
+// Foreground (trunk)
+document.querySelectorAll("#forestReveal .tree").forEach(el=>{
+  const cs = getComputedStyle(el);
+  const sd = parseFloat(cs.getPropertyValue("--shakeDeg")) || 0;  // degrees
+  const sy = parseFloat(cs.getPropertyValue("--shakeY"))   || 0;  // px
+  gsap.set(el, {
+    transformOrigin: "50% 125%",
+    rotation: (xF * 0.85) + sd,
+    skewX:   (xF * 0.28),
+    y:       (-Math.abs(xF) * footLift) + sy,
+  });
+  setTreeTransforms(xF, xB);
 });
 
-// Canopy overlays: sway slightly more than trunk so leaves “lag”
-gsap.set("#forestReveal .tree-stage", {
-  transformOrigin: "50% 125%",
-  rotation: xF,                       // full swing
-  skewX:   xF * 0.38,
-  y:       -Math.abs(xF) * footLift
+// Canopy overlays
+document.querySelectorAll("#forestReveal .tree-stage").forEach(el=>{
+  const cs = getComputedStyle(el);
+  const sd = parseFloat(cs.getPropertyValue("--shakeDeg")) || 0;
+  const sy = parseFloat(cs.getPropertyValue("--shakeY"))   || 0;
+  gsap.set(el, {
+    transformOrigin: "50% 125%",
+    rotation: xF + sd,
+    skewX:   (xF * 0.38),
+    y:       (-Math.abs(xF) * footLift) + sy
+  });
 });
 
-// Back row: lighter motion for depth
-gsap.set("#forestReveal .tree-back", {
-  transformOrigin: "50% 125%",
-  rotation: xB * 0.75,
-  skewX:   xB * 0.22,
-  y:       -Math.abs(xB) * footLift
+// Back row
+document.querySelectorAll("#forestReveal .tree-back").forEach(el=>{
+  const cs = getComputedStyle(el);
+  const sd = parseFloat(cs.getPropertyValue("--shakeDeg")) || 0;
+  const sy = parseFloat(cs.getPropertyValue("--shakeY"))   || 0;
+  gsap.set(el, {
+    transformOrigin: "50% 125%",
+    rotation: (xB * 0.75) + sd,
+    skewX:   (xB * 0.22),
+    y:       (-Math.abs(xB) * footLift) + sy
+  });
 });
+
 
 
     // keep ticking while moving/offset
@@ -1004,7 +1127,12 @@ function mouseIsActive(now){ return (now - (window.__mouseLastMove || 0)) < 120;
 
 function leafLoop(){
   if (!leafCanvas || !lctx) return;
-
+  if (window.__muteLeaves) {
+    // clear once to be safe, then skip the heavy work
+    lctx.clearRect(0, 0, leafCanvas.width, leafCanvas.height);
+    requestAnimationFrame(leafLoop);
+    return;
+  }
   const now = performance.now(); // single timestamp per frame
    leafLoop.__wokenThisFrame = 0; 
 
@@ -3639,6 +3767,7 @@ ScrollTrigger.create({
     // forestP = 0..1 only over the FOREST portion, then clamped (freezes at bare)
     const forestP = Math.min(p / FOREST_PORTION, 1);
 
+    
     // expose for any other code that reads it
     
 window.__currentProgress = forestP;
@@ -3689,6 +3818,11 @@ if (forestP < 1) {
     // --- TRACTOR TAIL (0..1 only inside the tail) ---
     // tailT = 0 while in forest; grows 0→1 only after forest is done
     const tailT = Math.max(0, Math.min(1, (p - FOREST_PORTION) / (1 - FOREST_PORTION)));
+if (tailT > 0 && tailT < 1){
+  lockTailLayers(true);
+} else {
+  lockTailLayers(false);
+}
 
 
 // Tractor exhaust: whenever tractor is visible in tail (speed influences strength, not on/off)
@@ -3812,7 +3946,12 @@ if (window.__fog__?.boostTail) window.__fog__.boostTail(doom);
     }
   },
 
-  onLeaveBack(){
+   onLeave() {
+  lockTailLayers(false);
+},
+onLeaveBack() {
+  // always unlock tail when scrolling back above
+  lockTailLayers(false);
     // reset forest to start
     setStageProgress(0);
     if (!breathingOn){ resumeBreathing(); breathingOn = true; }
@@ -4057,41 +4196,3 @@ overlay.style.cursor = "default";
     // anything else (sky/empty) → no-op (or do subtle dust if you want)
   }, {passive:true});
 })();
-// ---- BRIDGE: fade the trail out while fading lamps in near the end of forest
-// Tweak these two knobs to taste:
-const HANDOFF_START = 0.90; // start blending when forest progress ≥ 85%
-const HANDOFF_SPAN  = 0.18; // blend across final 15% (85% → 100%)
-
-gsap.set("#lampsScene", { autoAlpha: 0, yPercent: 5 });
-
-ScrollTrigger.create({
-  trigger: "#forestReveal",           // forest section (your existing section)
-  start:   "top top",
-  end:     "bottom top",              // runs for the whole pinned span
-  scrub:   true,
-  onUpdate: (self) => {
-    // map last HANDOFF_SPAN of forest to 0..1
-    const p = gsap.utils.clamp(
-      0, 1,
-      (self.progress - HANDOFF_START) / HANDOFF_SPAN
-    );
-
-    // fade out the trail pieces (ground + leaves + tractor layer)
-    gsap.to(["#ground", "#leafCanvas", "#tractorLayer"], {
-      autoAlpha: 1 - p,
-      overwrite: "auto",
-      duration: 0
-    });
-
-    // fade/slide lamps in BEFORE their own ScrollTrigger kicks in
-    gsap.to("#lampsScene", {
-      autoAlpha: p,
-      yPercent: 5 - 5*p,   // 5vh → 0
-      overwrite: "auto",
-      duration: 0
-    });
-  },
-  // when the forest pin releases, ensure lamps are fully on
-  onLeave:     () => gsap.set("#lampsScene", { autoAlpha: 1, yPercent: 0 }),
-  onEnterBack: () => gsap.set("#lampsScene", { autoAlpha: 0, yPercent: 5 })
-});
