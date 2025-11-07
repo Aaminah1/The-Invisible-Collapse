@@ -528,22 +528,40 @@ function spawnLeaf(stageIdx){
 
   const [vmin, vmax] = LEAF_SPEED[stageIdx] || [1,2];
 
-  falling.push({
-    img, x, y,
-    vy: 0, vx: 0,
-    size: rand(18, 36),
-    rot: rand(0, Math.PI*2),
-    rVel: rand(-0.06, 0.06),
-    wob1: rand(0.015, 0.025),
-    wob2: rand(0.06,  0.09),
-    amp1: rand(4, 8),
-    amp2: rand(2, 5),
-    termVy: rand(1.6, 2.6),
-    dragY: rand(0.90, 0.96),
-    baseDrop: rand(vmin, vmax),
-    t: 0,
-    air: true
-  });
+ falling.push({
+  img, x, y,
+  // motion state
+  vy: 0, vx: 0,
+
+  // look
+  size: rand(18, 36),
+  rot: rand(0, Math.PI*2),
+
+  // spin + wobble params
+  rVel: rand(-0.06, 0.06),
+  wob1: rand(0.015, 0.028),          // low-freq weave
+  wob2: rand(0.055, 0.095),          // higher-freq flutter
+  amp1: rand(4, 9),
+  amp2: rand(2, 6),
+
+  // extra variety
+  ph1: rand(0, Math.PI*2),           // random phases so paths don’t sync
+  ph2: rand(0, Math.PI*2),
+  bank: rand(-0.10, 0.10),           // aerodynamic tilt preference
+  liftBias:  rand(-0.25, 0.35),      // some sink more, some float more
+  driftBias: rand(0.75, 1.35),       // how strongly wind pushes this leaf
+  riseChance: rand(0.00, 0.22),      // chance to catch a tiny updraft
+
+  // vertical settling
+  termVy: rand(1.6, 2.6),
+  dragY:  rand(0.90, 0.96),
+  baseDrop: rand(vmin, vmax),
+
+  // time
+  t: 0,
+  air: true
+});
+
 }
 
 function spawnDustPuff(rect){
@@ -930,7 +948,11 @@ function attachTreeClicks(){
 const G = 0.25, FRICTION = 0.88, ROT_F = 0.97, BOUNCE = 0.3;
 const WIND = { x: 0 };    // shared gust
 window.__WIND__ = WIND; // expose to mic controller
-
+function windGate(){
+  const e = Math.max(0, Math.min(1, window.__breathEnv__ || 0));
+  // ignore tiny mic hiss so leaves don't "rail" in a line
+  return (e < 0.04) ? 0 : e;
+}
 // --- Smooth, spring-damped tree sway (no snap-back) ---
 (() => {
   // State per layer
@@ -1220,7 +1242,7 @@ const r2 = MOUSE_WAKE_R2;
     p.vy += G * 0.6;
     p.vy *= p.dragY;
     if (p.vy > p.termVy) p.vy = p.termVy;
-    p.x += p.vx + WIND.x;
+   p.x += p.vx + (WIND.x * windGate());
     p.y += p.vy;
     p.rVel *= ROT_F;
     p.rot += p.rVel;
@@ -1240,6 +1262,11 @@ const r2 = MOUSE_WAKE_R2;
     p.vx *= FRICTION; p.vy = 0; p.rVel *= ROT_F;
     p.y = ground;
   }
+if (windGate() === 0 && !p.air) {
+  // bleed off any residual sideways drift quickly when breath is idle
+  p.vx *= 0.86;
+  if (Math.abs(p.vx) < 0.02) p.vx = 0;
+}
 
   if (p.x < half) { p.x = half; p.vx *= -BOUNCE; }
   if (p.x > leafCanvas.width - half) { p.x = leafCanvas.width - half; p.vx *= -BOUNCE; }
@@ -1255,88 +1282,81 @@ const r2 = MOUSE_WAKE_R2;
     lctx.drawImage(p.img, p.x - half, ground - half, p.size, p.size);
   }
 });
-
-
-  /* ---------------- falling leaves ---------------- */
-  const still = [];
-  falling.forEach(p => {
-    p.t++;
-    p.vy += G * 0.6;
-    p.vy *= p.dragY;
-    if (p.vy > p.termVy) p.vy = p.termVy;
-
-    const wob = Math.sin(p.t * p.wob1) * p.amp1 + Math.sin(p.t * p.wob2) * p.amp2;
-    p.y += p.baseDrop + p.vy;
-    p.x += wob * 0.02 + WIND.x;
-    p.rot += p.rVel;
-
-    const half   = p.size / 2;
-    const ground = leafCanvas.height - half - GROUND_RISE_PX;
-// after you declare/refresh the arrays in your render tick:
-window.__leafRefs__ = { settled, falling }; // expose current leaf arrays to mic hook
-
-// expose arrays each frame (keep as-is wherever you already do it)
-window.__leafRefs__ = { settled, falling };
-
-// --- replace mic hook with this version ---
-window.__leavesMicResponse__ = (strength = 0) => {
-  const refs = window.__leafRefs__;
-  if (!refs) return;
-
-  const { settled = [], falling = [] } = refs;
-
-  // when any meaningful breath arrives, bypass the "fast path" for ~300ms
-  if (strength > 0.02) {
-    window.__wakeAllUntil = performance.now() + 300;
+const mdl  = window.__WIND_MODEL__;
+const tune = mdl ? mdl.sample(performance.now()/1000) : { turb:1, lift:1, size:1 };
+/* ---------------- falling leaves ---------------- */
+const still = [];
+falling.forEach(p => {
+  // one-time per-leaf defaults (so old leaves keep working)
+  if (!p.__init) {
+    p.ph1 = p.ph1 ?? Math.random() * Math.PI * 2;
+    p.ph2 = p.ph2 ?? Math.random() * Math.PI * 2;
+    p.wob1 = p.wob1 ?? (0.015 + Math.random() * 0.013);  // low-freq weave
+    p.wob2 = p.wob2 ?? (0.055 + Math.random() * 0.040);  // hi-freq flutter
+    p.amp1 = p.amp1 ?? (4 + Math.random() * 5);
+    p.amp2 = p.amp2 ?? (2 + Math.random() * 4);
+    p.bank = p.bank ?? (Math.random() * 0.20 - 0.10);    // ± tilt bias
+    p.liftBias  = p.liftBias  ?? (Math.random() * 0.60 - 0.25);
+    p.driftBias = p.driftBias ?? (0.75 + Math.random() * 0.60);
+    p.riseChance= p.riseChance?? (Math.random() * 0.22);
+    p.vx = p.vx ?? 0;
+    p.rVel = p.rVel ?? 0;
+    p.__init = 1;
   }
 
- const IMP  = 2.8 * strength;   // was 2.2
-const LIFT = 0.60 * strength;  // was 0.45
-const SPIN = 0.16 * strength; 
+  // time & vertical settle
+  p.t++;
+  p.vy += G * 0.6;
+  p.vy *= p.dragY;
+  if (p.vy > p.termVy) p.vy = p.termVy;
 
-  // Kick ALL resting leaves (not just 1/3rd)
-  for (let i = 0; i < settled.length; i++) {
-    const p = settled[i]; if (!p) continue;
-    // tiny floor so even weak breath is visible
-    const k = Math.max(0.25, strength);
-    p.vx   += (0.4 + Math.random() * 0.9) * IMP * k;
-    p.vy   -= LIFT * (0.4 + Math.random()) * k;
-    p.rVel += (Math.random() - 0.5) * SPIN;
-    p.air   = true;
+  // occasional tiny updraft so some leaves climb briefly
+  if (Math.random() < (0.004 * tune.lift) && Math.random() < (p.riseChance||0)) {
+    p.vy -= 0.4 + Math.random() * 0.5;
   }
 
-  // Push ALL falling leaves sideways (not just 1/2)
-  for (let i = 0; i < falling.length; i++) {
-    const p = falling[i]; if (!p) continue;
-    const k = Math.max(0.25, strength);
-    p.vx   += (0.3 + Math.random() * 0.7) * IMP * k;
-    p.rVel += (Math.random() - 0.5) * SPIN * 0.8;
-  }
-};
+  // natural lateral drift = wind + two sin wobbles
+const wob = Math.sin(p.t * p.wob1 + (p.ph1||0)) * (p.amp1 * tune.turb)
+           + Math.sin(p.t * p.wob2 + (p.ph2||0)) * (p.amp2 * tune.turb);
 
+  // integrate (X uses a little inertia so paths don't look rail-guided)
+const targetDx = wob * 0.06 + (WIND.x * windGate() * (p.driftBias || 1));
+  p.vx += (targetDx - p.vx) * 0.12; // ease towards target lateral drift
+  p.x  += p.vx;
 
-    if (p.y < ground) {
-      still.push(p);
-      lctx.save();
-      lctx.translate(p.x, p.y);
-      lctx.rotate(p.rot);
-      lctx.drawImage(p.img, -p.size / 2, -p.size / 2, p.size, p.size);
-      lctx.restore();
-    } else {
-      p.y = ground;
-      p.vx = (Math.random() - 0.5) * 1.4;
-      p.vy = -Math.random() * 2;
-      p.rVel = (Math.random() - 0.5) * 0.3;
-      p.air = true;
-      settled.push(p);
-           
-      if (settled.length > MAX_SETTLED) {
-        settled.splice(0, settled.length - MAX_SETTLED);
-      }
+  // vertical position includes baseDrop and lift personality
+  p.y += p.baseDrop + p.vy * (1.0 - 0.22 * p.liftBias);
 
+  // rotation softly “banks” with drift
+  const bankAim = (p.bank || 0) + p.vx * 0.002;
+  p.rVel += (bankAim - p.rVel) * 0.06;
+  p.rot  += p.rVel;
+
+  const half   = p.size / 2;
+  const ground = leafCanvas.height - half - GROUND_RISE_PX;
+
+  if (p.y < ground) {
+    still.push(p);
+    lctx.save();
+    lctx.translate(p.x, p.y);
+    lctx.rotate(p.rot);
+    lctx.drawImage(p.img, -p.size / 2, -p.size / 2, p.size, p.size);
+    lctx.restore();
+  } else {
+    p.y = ground;
+    p.vx = (Math.random() - 0.5) * 1.4;
+    p.vy = -Math.random() * 2;
+    p.rVel = (Math.random() - 0.5) * 0.3;
+    p.air = true;
+    settled.push(p);
+
+    if (settled.length > MAX_SETTLED) {
+      settled.splice(0, settled.length - MAX_SETTLED);
     }
-  });
-  falling = still;
+  }
+});
+falling = still;
+window.__leafRefs__ = { settled, falling };
 
   /* ---------------- pickups (apple/flower/twig) ---------------- */
   pickups = pickups.filter(p => !p.dead);
@@ -2187,7 +2207,7 @@ fade: 0.04 + Math.random()*0.015,
         filter: blur(2px);
         transform: translate3d(0,30px,0); /* Y is animated during reveal; no X here */
         pointer-events:auto;          /* enable clicks on the images */
-        /*cursor: crosshair;             optional: “clickable effect” cursor */
+              optional: “clickable effect” cursor */
         user-select:none;
       }
       #bgCity .back{ z-index:1; }
@@ -2251,11 +2271,70 @@ window.__cityClicksOn = function(){
   if (r) {
     r.style.display = "block";
     r.style.pointerEvents = "auto";
-    r.style.cursor = "crosshair";
+  
   }
   const sparks = document.getElementById("citySparks");
   if (sparks) sparks.style.display = "block";
 };
+
+
+// keep default cursor AND let events through when hovering the mic button
+(() => {
+  const router = document.getElementById("cityClickRouter");
+  if (!router) return;
+
+  function isMic(el){
+    return !!(el && (el.id === "micWindBtn" || (el.closest && el.closest("#micWindBtn"))));
+  }
+
+  let punched = false;
+  function punchThrough(on){
+    if (on && !punched){
+      router.style.pointerEvents = "none"; // let mic receive hover/click
+      punched = true;
+      // fail-safe: restore on next frame in case we moved off instantly
+      requestAnimationFrame(() => {
+        if (punched && !isMic(document.elementFromPoint(window._mx||0, window._my||0))){
+          router.style.pointerEvents = "auto";
+          punched = false;
+        }
+      });
+    } else if (!on && punched){
+      router.style.pointerEvents = "auto";
+      punched = false;
+    }
+  }
+
+  // Track mouse position so the rAF fail-safe can re-check
+  window._mx = 0; window._my = 0;
+
+  router.addEventListener("mousemove", (e) => {
+    window._mx = e.clientX; window._my = e.clientY;
+
+    // peek under the overlay to see what's really beneath
+    let under;
+    if (typeof elementUnder === "function") {
+      under = elementUnder(e.clientX, e.clientY); // uses temporary pointerEvents:none
+    } else {
+      // do a manual peek
+      router.style.pointerEvents = "none";
+      under = document.elementFromPoint(e.clientX, e.clientY);
+      router.style.pointerEvents = punched ? "none" : "auto";
+    }
+
+    const overMic = isMic(under);
+    router.style.cursor = overMic ? "auto" : "pointer";
+    punchThrough(overMic);
+  }, {passive:true});
+
+  // If the mouse leaves the router overlay, restore pointer-events
+  router.addEventListener("mouseleave", () => punchThrough(false), {passive:true});
+
+  // Also restore when user clicks somewhere that isn’t the mic
+  router.addEventListener("pointerdown", (e) => {
+    if (!isMic(e.target)) punchThrough(false);
+  }, {passive:true});
+})();
 
 
 function debugDot(x,y){
@@ -2571,7 +2650,7 @@ function setRouterEnabled(on){
   const r = document.getElementById("cityClickRouter");
   if (!r) return;
   r.style.display = on ? "block" : "none";
-  r.style.cursor  = on ? "crosshair" : "default";
+  
 }
   function startTicker(){
     if (tickerOn) return;
@@ -3701,6 +3780,7 @@ window.__leavesMicResponse__ = function(strength = 0){
   if (!refs) return;
 
   const { settled = [], falling = [] } = refs;
+  window.__leafRefs__ = { settled, falling };
 
   // Direction: use current wind sign if available; default to +1
   const dir  = Math.sign((window.__WIND__ && window.__WIND__.x) || 1) || 1;

@@ -11,7 +11,8 @@
 
 /* OUTER: GSAP slides this in/out only (no scale/hover here) */
 #micWindBtn{
-  position: fixed; right:16px; bottom:16px; z-index:9999;
+  position: fixed; right:16px; bottom:16px; z-index:10001;
+   cursor: default !important;
   display:inline-flex; padding:0; border:none; background:transparent;
   pointer-events:none;               /* JS enables when visible */
   transform: translateZ(0);          /* GSAP will add xPercent */

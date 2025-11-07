@@ -165,7 +165,7 @@
   pointer-events: auto;     /* receives clicks */
   background: transparent;  /* invisible */
   user-select: none;
-  cursor: crosshair;
+  cursor: pointer;
 }
 
 /* tiny debug dot so you *see* where we think you clicked */
