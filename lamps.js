@@ -19,7 +19,7 @@
     "images/lampost1.png",     // stage 0 → lantern
     "images/lampost3.png",     // stage 1 → streetlight
     "images/lampost4.1.png",   // stage 2 → later streetlight (build-up)
-    "images/lampost4.1.png",   // stage 3 → later streetlight (blackout, same art)
+    "images/lampost5.png",   // stage 3 → later streetlight (blackout, same art)
   ];
 
   const GROUND_SRC = [
@@ -30,17 +30,17 @@
   ];
 
   const NEAR_SRC = [
-    "images/city11.png",
-    "images/city31.png",
-    "images/city41.png",
-    "images/city41.png",
+    "images/citya.png",
+    "images/cityb.png",
+    "images/cityc.png",
+    "images/cityc.png",
   ];
 
   const FAR_SRC = [
-    "images/cityfar_11.png",
-    "images/cityfar_22.png",
-    "images/cityfar_44.png",
-    "images/cityfar_44.png"
+    "images/cityfar_a.png",
+    "images/cityfar_b.png",
+    "images/cityfar_c.png",
+    "images/cityfar_c.png"
   ];
 
   const NEAR_REF = "images/constructioncity_near.png";
@@ -1324,7 +1324,7 @@ function renderSoot(ctx, W, H){
 
     const xfade = buildCrossfade();
 
-    // *** NEW: long, fixed pin length for slow scrolling ***
+    // *** long, fixed pin length for slow scrolling ***
     const st = ScrollTrigger.create({
       trigger: "#lampsScene",
       start: "top top",
@@ -1334,37 +1334,46 @@ function renderSoot(ctx, W, H){
       anticipatePin: 1,
 
       /* ---------- UPDATED CALLBACKS (respect latch) ---------- */
-      onEnter(self){
-        // entering lamp scene from above
-        disableCityClicks();
-        if (!window.__lampsBlackHold) __blackoutOffNow(); // clear only if not latched
-      },
+    /* ---------- UPDATED CALLBACKS (direction-aware city-clicks) ---------- */
+onEnter(self){
+  // Entering lamps from above (from city) → city clicks OFF inside lamps
+  disableCityClicks();
+  if (!window.__lampsBlackHold) __blackoutOffNow(); // clear only if not latched
+},
 
-      onEnterBack(self){
-        // re-entering lamp scene from below (scrolling up)
-        disableCityClicks();
-        if (window.__lampsBlackHold) __blackoutTo(1); else __blackoutOffNow();
-      },
+onEnterBack(self){
+  // Re-entering lamps from below (from outro) → still keep city clicks OFF
+  disableCityClicks();
+  if (window.__lampsBlackHold) __blackoutTo(1); else __blackoutOffNow();
+},
 
-      onLeave(self){
-        // leaving lamp scene downward into outro
-        enableCityClicks();
-        if (self.direction === 1 && window.__lampsBlackHold) {
-          // keep it black for the outro
-          __blackoutTo(1);
-        } else {
-          __blackoutOffNow();
-          __clearBlackPrograms();
-        }
-      },
+onLeave(self){
+  // Leaving lamps:
+  if (self.direction === 1){
+    // going DOWN → into OUTRO → keep city clicks OFF so outro can be clicked
+    disableCityClicks();
+  } else {
+    // going UP → back into CITY → re-enable city clicks
+    enableCityClicks();
+  }
 
-      onLeaveBack(self){
-        // leaving lamp scene upward back to tractor/earlier scenes
-        enableCityClicks();
-        __blackoutOffNow();
-        __clearBlackPrograms();
-        window.__lampsBlackHold = false; // release latch when fully out above
-      },
+  // keep your blackout logic as-is
+  if (self.direction === 1 && window.__lampsBlackHold) {
+    __blackoutTo(1);           // keep it black for the outro
+  } else {
+    __blackoutOffNow();
+    __clearBlackPrograms();
+  }
+},
+
+onLeaveBack(self){
+  // Leaving lamps upward (entering city from below) → make sure city clicks are ON
+  enableCityClicks();
+  __blackoutOffNow();
+  __clearBlackPrograms();
+  window.__lampsBlackHold = false; // release latch when fully out above
+},
+
 
       onUpdate(self){
         const p = self.progress;       // 0..1 across the long pin

@@ -423,3 +423,44 @@
     }
   });
 })();
+(() => {
+  if (!window.gsap || !window.ScrollTrigger) return;
+  const el = document.getElementById('outro');
+  if (!el) return;
+
+  function cityClicksOff(){
+    window.disableCityClicks?.();
+    const hit = document.getElementById('cityHit');
+    if (hit) hit.style.display = 'none';
+  }
+  function cityClicksOn(){
+    window.enableCityClicks?.();
+    const hit = document.getElementById('cityHit');
+    if (hit) hit.style.display = '';
+  }
+
+  gsap.to({}, {
+    scrollTrigger: {
+      trigger: el,
+      start: 'top bottom',
+      end: 'bottom top',
+      onEnter(){ 
+        document.body.classList.add('in-outro');
+        cityClicksOff();
+      },
+      onEnterBack(){ 
+        document.body.classList.add('in-outro');
+        cityClicksOff();
+      },
+      onLeave(){ 
+        document.body.classList.remove('in-outro');
+        // leaving downward → no need to enable city here
+      },
+      onLeaveBack(){ 
+        document.body.classList.remove('in-outro');
+        // leaving upward → back to city → re-enable
+        cityClicksOn();
+      }
+    }
+  });
+})();

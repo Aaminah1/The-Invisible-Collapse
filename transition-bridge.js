@@ -178,8 +178,8 @@
         const t3 = ease( clamp01((t - 0.60) / 0.25) ); // Beat 3
 
         /* ===== BEAT 1: hush & cool ===== */
-        const cY = DIALS.cloudPress * t1;
-        if (setCloudY && changed(cY, "cY", 0.5)) setCloudY(cY);
+        const cY = Math.round(DIALS.cloudPress * t1);
+if (setCloudY && changed(cY, "cY", 0.5)) setCloudY(cY);
 
         const coolHue = DIALS.coolHue * t1;
         const coolSat = 1 - 0.22 * t1;  // 1 → 0.78
@@ -206,15 +206,15 @@
         }
 
         /* ===== BEAT 2: industry builds (camera push + wind shear) ===== */
-        const fS = 1 + DIALS.pushScale * t2;
-        const nS = fS;
-        const fY = DIALS.pushY * t2;
-        const nY = fY;
+       const fS = 1 + DIALS.pushScale * t2;
+const nS = fS;
+const fY = Math.round(DIALS.pushY * t2);
+const nY = fY;
 
-        if (setFarS && changed(fS, "fS", 0.0008)) setFarS(fS);
-        if (setNearS && changed(nS, "nS", 0.0008)) setNearS(nS);
-        if (setFarY && changed(fY, "fY", 0.5)) setFarY(fY);
-        if (setNearY && changed(nY, "nY", 0.5)) setNearY(nY);
+if (setFarS && changed(fS, "fS", 0.0008)) setFarS(fS);
+if (setNearS && changed(nS, "nS", 0.0008)) setNearS(nS);
+if (setFarY && changed(fY, "fY", 0.5))     setFarY(fY);
+if (setNearY && changed(nY, "nY", 0.5))    setNearY(nY);
 
         const wind = DIALS.windShear * t2;
         if (changed(wind, "wind", 0.2)) window.__clouds?.setWind(wind);
@@ -240,9 +240,17 @@
         }
 
         // veil base fades out with a small pulse around ~70–80%
-        const pulse = Math.sin(Math.PI * clamp01((t - 0.64) / 0.16));
-        const veilOp = DIALS.veilBase * (1 - t) + Math.max(0, 0.16 * pulse);
-        if (changed(veilOp, "veil", 0.01)) veil.style.opacity = String(veilOp);
+       const pulse = Math.sin(Math.PI * clamp01((t - 0.64) / 0.16));
+let veilOp = DIALS.veilBase * (1 - t) + Math.max(0, 0.16 * pulse);
+
+// don’t render a near-zero gradient edge (prevents a faint line)
+if (veilOp < 0.02) {
+  if (changed(0, "veil", 0.01)) veil.style.opacity = "0";
+  bridge.style.display = "none";
+} else {
+  bridge.style.display = "block";
+  if (changed(veilOp, "veil", 0.01)) veil.style.opacity = String(veilOp);
+}
 
         // two quick “electric” flashes
         const f1 = clamp01((t - 0.66) / 0.03);

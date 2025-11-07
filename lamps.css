@@ -234,3 +234,16 @@
   z-index:5;       /* < lampsRow (6), > near/far stacks (1–3) */
   pointer-events:none;
 }
+/* seam guards for fixed full-screen layers */
+
+#bgClouds canvas,
+#parallaxFarStack,
+#parallaxNearStack,
+#lampsScene,
+#handoffBridge {
+  top: -1px;
+  height: calc(100% + 2px);
+  backface-visibility: hidden;
+  transform: translateZ(0);
+}
+

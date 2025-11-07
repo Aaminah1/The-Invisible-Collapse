@@ -235,6 +235,10 @@ async function preflightMic() {
     // UI meter shows gated env (idle looks idle)
     const gatedEnv  = __gateActive ? (breathEnv - GATE_OFF) / (1 - GATE_OFF) : 0;
     const cleanEnv  = Math.max(0, Math.min(1, gatedEnv));
+    window.windGate = function windGate(){
+  // 1 when breath is active, 0 when the gate is closed (idle)
+  return gatedEnv > 0 ? 1 : 0;
+};
     try { meterSet(cleanEnv); } catch {}
 
     // Ambient sound follows gated env

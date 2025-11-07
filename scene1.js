@@ -103,7 +103,7 @@
   let whooshPlayed = false;
 
   function createAudio() {
-    const a = new Audio("sounds/whoosh_soft.mp3");
+    const a = new Audio("sounds/whoosh1_soft.mp3");
     a.preload = "auto";
     a.volume = 0.6;
     a.onerror = () => console.warn("[scene1] whoosh sound failed to load (check path: /sounds/whoosh_soft.mp3)");

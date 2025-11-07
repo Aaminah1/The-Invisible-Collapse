@@ -1247,16 +1247,22 @@ const r2 = MOUSE_WAKE_R2;
     p.rVel *= ROT_F;
     p.rot += p.rVel;
 
-    if (p.y > ground) {
-      p.y = ground;
-      if (Math.abs(p.vy) > 0.4) {
-        p.vy *= -0.35; p.vx *= 0.7;
-        p.rVel += (Math.random() - 0.5) * 0.12;
-      } else {
-        p.vy = 0; p.air = false;
-        if (Math.abs(p.rVel) < 0.01) p.rVel = 0;
-      }
-    }
+   if (p.y > ground) {
+  p.y = ground;
+  const gateOn = window.windGate ? window.windGate() : 0;
+  if (gateOn && Math.abs(p.vy) > 0.4) {
+    // allow a little lively bounce only while user is blowing
+    p.vy *= -0.35; p.vx *= 0.7;
+    p.rVel += (Math.random() - 0.5) * 0.12;
+  } else {
+    // settle immediately when breath is idle
+    p.vx *= 0.5;
+    p.vy = 0;
+    p.air = false;
+    if (Math.abs(p.rVel) < 0.01) p.rVel = 0;
+  }
+}
+
   } else {
     // only minimal decay when resting
     p.vx *= FRICTION; p.vy = 0; p.rVel *= ROT_F;
@@ -1287,6 +1293,23 @@ const tune = mdl ? mdl.sample(performance.now()/1000) : { turb:1, lift:1, size:1
 /* ---------------- falling leaves ---------------- */
 const still = [];
 falling.forEach(p => {
+  // one-time per-leaf defaults (so old leaves keep working)
+if (!p.__init) {
+  p.ph1 = p.ph1 ?? Math.random() * Math.PI * 2;
+  p.ph2 = p.ph2 ?? Math.random() * Math.PI * 2;
+  p.wob1 = p.wob1 ?? (0.015 + Math.random() * 0.013);  // low-freq weave
+  p.wob2 = p.wob2 ?? (0.055 + Math.random() * 0.040);  // hi-freq flutter
+  p.amp1 = p.amp1 ?? (4 + Math.random() * 5);
+  p.amp2 = p.amp2 ?? (2 + Math.random() * 4);
+  p.bank = p.bank ?? (Math.random() * 0.20 - 0.10);    // ± tilt bias
+  p.liftBias  = p.liftBias  ?? (Math.random() * 0.60 - 0.25);
+  p.driftBias = p.driftBias ?? (0.75 + Math.random() * 0.60);
+  p.riseChance= p.riseChance?? (Math.random() * 0.22);
+  p.vx = p.vx ?? 0;
+  p.rVel = p.rVel ?? 0;
+  p.__init = 1;
+}
+
   // one-time per-leaf defaults (so old leaves keep working)
   if (!p.__init) {
     p.ph1 = p.ph1 ?? Math.random() * Math.PI * 2;
