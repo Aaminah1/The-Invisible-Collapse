@@ -99,6 +99,8 @@
   position: fixed;
   inset: 0;
   pointer-events: none; /* background shouldn't catch clicks */
+  height: 100vh;
+  width: 100%;
 }
 
 /* A generic class for our fixed overlays inside #bg */

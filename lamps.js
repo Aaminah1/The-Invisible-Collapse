@@ -19,7 +19,7 @@
     "images/lampost1.png",     // stage 0 → lantern
     "images/lampost3.png",     // stage 1 → streetlight
     "images/lampost4.1.png",   // stage 2 → later streetlight (build-up)
-    "images/lampost5.png",   // stage 3 → later streetlight (blackout, same art)
+    "images/lampost5.png",     // stage 3 → later streetlight (blackout, same art)
   ];
 
   const GROUND_SRC = [
@@ -72,26 +72,29 @@
   const XFADE_SEGS       = (LAMP_SRC.length - 1); // should be 3 with 4 imgs
   const XFADE_SEG_DUR    = (1 - XFADE_HOLD_START - XFADE_HOLD_END) / XFADE_SEGS; // 0.25
 
+  /* ---- Beam lead + fade speed (NEW) ---- */
+  const BEAM_LEAD  = 0.06;   // beams/glow/hue/geometry switch this much earlier than sprite crossfades
+  const BEAM_FADE_S = 0.18;  // faster overlay transition (seconds). Try 0.12–0.22.
+
   function sceneFromProgress(p){
     if (p < CUT1) return 0;  // lantern
     if (p < CUT2) return 1;  // streetlight
     if (p < CUT3) return 2;  // late streetlight (build-up)
     return 3;                // blackout
   }
+  let __seededOnEnter = false;
 
   /* ---- LITTER PACKS ---- */
   const LITTER_PACKS = {
-    0: ["images/litter/paper.png","images/litter/receipt.png","images/litter/trash.png","images/litter/rock.png"],
+    0: ["images/litter/paper.png","images/litter/receipt.png","images/litter/trash.png","images/litter/rock.png","images/litter/waterbottle.png" ],
     1: [
       "images/litter/coffee.png","images/litter/moderncoffee.png","images/litter/chippacket.png",
       "images/litter/tupperware.png","images/litter/waterbottle.png","images/litter/plasticpacke.png",
-      "images/litter/colorcan.png","images/litter/wine.png","images/litter/mask.png",
-      "images/litter/waterbottle.png","images/litter/plasticpacke.png","images/litter/colorcan.png",
-      "images/litter/wine.png","images/litter/mask.png"
+      "images/litter/colorcan.png","images/litter/wine.png","images/litter/mask.png"
     ],
     2: ["images/litter/waterbottle.png","images/litter/plasticpacke.png","images/litter/colorcan.png","images/litter/wine.png","images/litter/mask.png"]
   };
-  const LITTER_PACK_DEFAULT = ["images/litter/plasticpacke.png", "images/litter/rock.png"];
+  const LITTER_PACK_DEFAULT = ["images/litter/plasticpacke.png", "images/litter/rock.png","images/litter/colorcan.png"];
   const LITTER_ALL = [...new Set([...LITTER_PACK_DEFAULT, ...Object.values(LITTER_PACKS).flat()])];
 
   /* ---------- PER-ITEM PHYS ---------- */
@@ -112,479 +115,478 @@
   };
   const DEFAULT_PHYS = { g:0.90, air:0.014, turb:0.55, lift:0.002, spin:1.00, groundFriction:0.94, rotFriction:0.96, impact:0.70, cursor:1.00 };
 
-/* ================== LITTER CANVAS ================== */
-(() => {
-  // --- screen-edge walls for litter ---
-  const WALL_MARGIN   = 12;   // how close to the edge before we clamp/bounce
-  const WALL_REST_AIR = 0.35; // bounce energy when airborne
-  const WALL_REST_GND = 0.20; // bounce energy when on ground (lower = deader)
-  const WALL_EDGE_FRI = 0.90; // extra friction when scraping along wall
-  const WALL_SPIN_KICK = 0.008; // ↓ reduced to avoid over-spinning on wall hits
+  /* ================== LITTER CANVAS ================== */
+  (() => {
+    // --- screen-edge walls for litter ---
+    const WALL_MARGIN   = 12;   // how close to the edge before we clamp/bounce
+    const WALL_REST_AIR = 0.35; // bounce energy when airborne
+    const WALL_REST_GND = 0.20; // bounce energy when on ground (lower = deader)
+    const WALL_EDGE_FRI = 0.90; // extra friction when scraping along wall
+    const WALL_SPIN_KICK = 0.008; // ↓ reduced to avoid over-spinning on wall hits
 
-  function handleWalls(p, W) {
-    const halfW = p.w * 0.5;
-    const leftLimit  = WALL_MARGIN + halfW;
-    const rightLimit = W - WALL_MARGIN - halfW;
+    function handleWalls(p, W) {
+      const halfW = p.w * 0.5;
+      const leftLimit  = WALL_MARGIN + halfW;
+      const rightLimit = W - WALL_MARGIN - halfW;
 
-    // Too far left: clamp & bounce
-    if (p.x < leftLimit) {
-      p.x = leftLimit;
-      p.vx = Math.abs(p.vx) * (p.settled ? WALL_REST_GND : WALL_REST_AIR);
-      p.spin += WALL_SPIN_KICK * (0.5 + Math.random());
-      // scrape friction
-      p.vx *= WALL_EDGE_FRI;
-    }
-    // Too far right: clamp & bounce
-    else if (p.x > rightLimit) {
-      p.x = rightLimit;
-      p.vx = -Math.abs(p.vx) * (p.settled ? WALL_REST_GND : WALL_REST_AIR);
-      p.spin -= WALL_SPIN_KICK * (0.5 + Math.random());
-      p.vx *= WALL_EDGE_FRI;
-    }
-  }
-
-  // --- spin governor (keeps angular velocity sensible) ---
-  const SPIN_MAX_HARD   = 0.12;  // absolute max |spin| (rad/frame)
-  const SPIN_SOFT_CAP   = 0.08;  // start damping more aggressively above this
-  const SPIN_BASE_DAMP  = 0.985; // mild baseline damping every frame
-  const SPIN_GROUND_DMP = 0.92;  // extra damping when settled
-
-  function limitSpin(p){
-    // mild baseline damping always
-    p.spin *= SPIN_BASE_DAMP;
-
-    // extra damping when resting on ground (prevents “stuck spinning” look)
-    if (p.settled) p.spin *= SPIN_GROUND_DMP;
-
-    // soft cap → if above threshold, damp progressively harder
-    const a = Math.abs(p.spin);
-    if (a > SPIN_SOFT_CAP){
-      const over = Math.min(1.5, (a - SPIN_SOFT_CAP) / (SPIN_MAX_HARD - SPIN_SOFT_CAP)); // 0..~1.5
-      const extra = 0.90 - over * 0.25;   // 0.90 → 0.525
-      p.spin *= Math.max(0.52, extra);
+      // Too far left: clamp & bounce
+      if (p.x < leftLimit) {
+        p.x = leftLimit;
+        p.vx = Math.abs(p.vx) * (p.settled ? WALL_REST_GND : WALL_REST_AIR);
+        p.spin += WALL_SPIN_KICK * (0.5 + Math.random());
+        // scrape friction
+        p.vx *= WALL_EDGE_FRI;
+      }
+      // Too far right: clamp & bounce
+      else if (p.x > rightLimit) {
+        p.x = rightLimit;
+        p.vx = -Math.abs(p.vx) * (p.settled ? WALL_REST_GND : WALL_REST_AIR);
+        p.spin -= WALL_SPIN_KICK * (0.5 + Math.random());
+        p.vx *= WALL_EDGE_FRI;
+      }
     }
 
-    // hard clamp
-    if (p.spin >  SPIN_MAX_HARD) p.spin =  SPIN_MAX_HARD;
-    if (p.spin < -SPIN_MAX_HARD) p.spin = -SPIN_MAX_HARD;
-  }
+    // --- spin governor (keeps angular velocity sensible) ---
+    const SPIN_MAX_HARD   = 0.12;  // absolute max |spin| (rad/frame)
+    const SPIN_SOFT_CAP   = 0.08;  // start damping more aggressively above this
+    const SPIN_BASE_DAMP  = 0.985; // mild baseline damping every frame
+    const SPIN_GROUND_DMP = 0.92;  // extra damping when settled
 
-  const GRAVITY = 0.018, WIND_K = 0.01;
-  const FRICTION = 0.94, ROT_FRICTION = 0.96, STOP_EPS = 0.03;
-  const MAX_PARTS = 520, SIZE_RANGE = [28, 48];
+    function limitSpin(p){
+      // mild baseline damping always
+      p.spin *= SPIN_BASE_DAMP;
 
-  const LAMP_WANDER_PX = 160;
-  const FREEFALL_CHANCE = 0.28;
-  const TOP_SPAWN_PAD = 100, SKY_SPAWN_PAD = 140;
-  const BASE_WIND_SCENE0 = -0.01, BASE_WIND_SCENE1 = 0.03;
-  const GROUND_OFFSET = -6;
+      // extra damping when resting on ground (prevents “stuck spinning” look)
+      if (p.settled) p.spin *= SPIN_GROUND_DMP;
 
-  let canvas = null, ctx = null;
-  let LAMP_RECTS = [];
-  let groundY = null;
-  const parts = [];
+      // soft cap → if above threshold, damp progressively harder
+      const a = Math.abs(p.spin);
+      if (a > SPIN_SOFT_CAP){
+        const over = Math.min(1.5, (a - SPIN_SOFT_CAP) / (SPIN_MAX_HARD - SPIN_SOFT_CAP)); // 0..~1.5
+        const extra = 0.90 - over * 0.25;   // 0.90 → 0.525
+        p.spin *= Math.max(0.52, extra);
+      }
 
-  // --- breath-driven wind controls for litter ---
-  let __LITTER_WIND_X = 0;      // continuous side push from mic (pixels/frame-ish)
-  let __LITTER_LIFT   = 0;      // small upward lift from strong breath (for airborne only)
-  let __LITTER_GUST   = 0;      // short-lived burst impulse
+      // hard clamp
+      if (p.spin >  SPIN_MAX_HARD) p.spin =  SPIN_MAX_HARD;
+      if (p.spin < -SPIN_MAX_HARD) p.spin = -SPIN_MAX_HARD;
+    }
 
-  // external setters (mic-wind.js will call these)
-  window.__litterSetWind  = (wx = 0, lift = 0) => { __LITTER_WIND_X = +wx || 0; __LITTER_LIFT = +lift || 0; };
-  window.__litterBurst    = (power = 1)        => { __LITTER_GUST = Math.max(__LITTER_GUST, +power || 0); };
+    const GRAVITY = 0.018, WIND_K = 0.01;
+    const FRICTION = 0.94, ROT_FRICTION = 0.96, STOP_EPS = 0.03;
+    const MAX_PARTS = 520, SIZE_RANGE = [28, 48];
 
-  const SPRITE_BANK = { 0: [], 1: [], 2: [], default: [] };
-  const rand = (a, b) => a + Math.random() * (b - a);
-  const pick = arr => arr[(Math.random() * arr.length) | 0];
+    const LAMP_WANDER_PX = 160;
+    const FREEFALL_CHANCE = 0.42;
+    const TOP_SPAWN_PAD = 100, SKY_SPAWN_PAD = 140;
+    const BASE_WIND_SCENE0 = -0.01, BASE_WIND_SCENE1 = 0.03;
+    const GROUND_OFFSET = -6;
 
-  function preloadSprites() {
-    const all = [...LITTER_ALL];
-    return Promise.all(
-      all.map(src => new Promise(res => {
-        const im = new Image();
-        im.onload = im.onerror = () => res([src, im]);
-        im.src = src;
-      }))
-    ).then(pairs => {
-      const map = new Map(pairs);
-      [0,1,2].forEach(k => {
-        SPRITE_BANK[k] = (LITTER_PACKS[k] || [])
+    let canvas = null, ctx = null;
+    let LAMP_RECTS = [];
+    let groundY = null;
+    const parts = [];
+
+    // --- breath-driven wind controls for litter ---
+    let __LITTER_WIND_X = 0;      // continuous side push from mic (pixels/frame-ish)
+    let __LITTER_LIFT   = 0;      // small upward lift from strong breath (for airborne only)
+    let __LITTER_GUST   = 0;      // short-lived burst impulse
+
+    // external setters (mic-wind.js will call these)
+    window.__litterSetWind  = (wx = 0, lift = 0) => { __LITTER_WIND_X = +wx || 0; __LITTER_LIFT = +lift || 0; };
+    window.__litterBurst    = (power = 1)        => { __LITTER_GUST = Math.max(__LITTER_GUST, +power || 0); };
+
+    const SPRITE_BANK = { 0: [], 1: [], 2: [], default: [] };
+    const rand = (a, b) => a + Math.random() * (b - a);
+    const pick = arr => arr[(Math.random() * arr.length) | 0];
+
+    function preloadSprites() {
+      const all = [...LITTER_ALL];
+      return Promise.all(
+        all.map(src => new Promise(res => {
+          const im = new Image();
+          im.onload = im.onerror = () => res([src, im]);
+          im.src = src;
+        }))
+      ).then(pairs => {
+        const map = new Map(pairs);
+        [0,1,2].forEach(k => {
+          SPRITE_BANK[k] = (LITTER_PACKS[k] || [])
+            .map(s => ({ img: map.get(s), key: keyFromSrc(s) }))
+            .filter(o => o.img);
+        });
+        SPRITE_BANK.default = LITTER_PACK_DEFAULT
           .map(s => ({ img: map.get(s), key: keyFromSrc(s) }))
           .filter(o => o.img);
       });
-      SPRITE_BANK.default = LITTER_PACK_DEFAULT
-        .map(s => ({ img: map.get(s), key: keyFromSrc(s) }))
-        .filter(o => o.img);
-    });
-  }
+    }
 
-  function keyFromSrc(src=""){
-    const m = src.match(/([^\/]+)\.(png|jpg|jpeg|webp|gif)$/i);
-    return m ? m[1].toLowerCase() : "unknown";
-  }
+    function keyFromSrc(src=""){
+      const m = src.match(/([^\/]+)\.(png|jpg|jpeg|webp|gif)$/i);
+      return m ? m[1].toLowerCase() : "unknown";
+    }
 
-  function sizeCanvas() {
-    if (!canvas) return;
-    canvas.width  = canvas.clientWidth;
-    canvas.height = canvas.clientHeight;
-    cacheLampRects();
-    cacheGroundLine();
-  }
+    function sizeCanvas() {
+      if (!canvas) return;
+      canvas.width  = canvas.clientWidth;
+      canvas.height = canvas.clientHeight;
+      cacheLampRects();
+      cacheGroundLine();
+    }
 
-  function cacheLampRects() {
-    LAMP_RECTS = [];
-    if (!canvas) return;
+    function cacheLampRects() {
+      LAMP_RECTS = [];
+      if (!canvas) return;
 
-    const cb = canvas.getBoundingClientRect();
-    document.querySelectorAll('#lampsRow .lampWrap').forEach(w => {
-      const target = w.querySelector('.lamp-hit') || w;
-      const r = target.getBoundingClientRect();
-      LAMP_RECTS.push({
-        x1: r.left  - cb.left,
-        x2: r.right - cb.left,
-        y1: r.top   - cb.top,
-        y2: r.bottom- cb.top
+      const cb = canvas.getBoundingClientRect();
+      document.querySelectorAll('#lampsRow .lampWrap').forEach(w => {
+        const target = w.querySelector('.lamp-hit') || w;
+        const r = target.getBoundingClientRect();
+        LAMP_RECTS.push({
+          x1: r.left  - cb.left,
+          x2: r.right - cb.left,
+          y1: r.top   - cb.top,
+          y2: r.bottom- cb.top
+        });
       });
-    });
-  }
-
-  function cacheGroundLine() {
-    groundY = null;
-    if (!canvas) return;
-    const g = document.getElementById('lampsGroundStack') || document.getElementById('lampsGroundBase');
-    if (!g) return;
-
-    const cb = canvas.getBoundingClientRect();
-    const gb = g.getBoundingClientRect();
-    groundY = (gb.bottom - cb.top) + GROUND_OFFSET; // bottom edge
-  }
-
-  function pickSpriteForScene(sceneIdx){
-    const bank = (SPRITE_BANK[sceneIdx] && SPRITE_BANK[sceneIdx].length)
-      ? SPRITE_BANK[sceneIdx]
-      : SPRITE_BANK.default;
-    return bank[(Math.random() * bank.length) | 0] || null; // {img,key}
-  }
-
-  function addPart(x, y, vx, vy, sprite) {
-    if (parts.length >= MAX_PARTS) {
-      const idx = parts.findIndex(p => !p.settled);
-      if (idx >= 0) parts.splice(idx, 1);
-      else parts.shift();
     }
 
-    const img = sprite?.img || null;
-    const key = sprite?.key || "unknown";
-    const phys = { ...DEFAULT_PHYS, ...(ITEM_PHYS[key] || {}) };
+    function cacheGroundLine() {
+      groundY = null;
+      if (!canvas) return;
+      const g = document.getElementById('lampsGroundStack') || document.getElementById('lampsGroundBase');
+      if (!g) return;
 
-    const target = Math.random() * (SIZE_RANGE[1]-SIZE_RANGE[0]) + SIZE_RANGE[0];
-    let w = 18, h = 14;
-    if (img) {
-      const iw = img.naturalWidth  || 32;
-      const ih = img.naturalHeight || 32;
-      const ar = iw / ih;
-      if (ar >= 1) { w = Math.round(target); h = Math.round(target / ar); }
-      else         { h = Math.round(target); w = Math.round(target * ar);  }
+      const cb = canvas.getBoundingClientRect();
+      const gb = g.getBoundingClientRect();
+      groundY = (gb.bottom - cb.top) + GROUND_OFFSET; // bottom edge
     }
 
-    parts.push({
-      x, y, vx, vy,
-      rot: (Math.random()*Math.PI*2) - Math.PI,
-      spin: (Math.random()-0.5) * 0.03 * phys.spin,
-      img, w, h,
-      flip: Math.random() < 0.35 ? -1 : 1,
-      settled: false,
-      phys, key
-    });
-  }
+    function pickSpriteForScene(sceneIdx){
+      const bank = (SPRITE_BANK[sceneIdx] && SPRITE_BANK[sceneIdx].length)
+        ? SPRITE_BANK[sceneIdx]
+        : SPRITE_BANK.default;
+      return bank[(Math.random() * bank.length) | 0] || null; // {img,key}
+    }
 
-  // public API
-  window.spawnLampLitter = function(sceneIdx = 0, count = 6) {
-    if (!(canvas && canvas.width && LAMP_RECTS.length)) return;
+    function addPart(x, y, vx, vy, sprite) {
+      if (parts.length >= MAX_PARTS) {
+        const idx = parts.findIndex(p => !p.settled);
+        if (idx >= 0) parts.splice(idx, 1);
+        else parts.shift();
+      }
 
-    const W = canvas.width;
+      const img = sprite?.img || null;
+      const key = sprite?.key || "unknown";
+      const phys = { ...DEFAULT_PHYS, ...(ITEM_PHYS[key] || {}) };
 
-    for (let i = 0; i < count; i++) {
-      const sprite = pickSpriteForScene(sceneIdx);
+      const target = Math.random() * (SIZE_RANGE[1]-SIZE_RANGE[0]) + SIZE_RANGE[0];
+      let w = 18, h = 14;
+      if (img) {
+        const iw = img.naturalWidth  || 32;
+        const ih = img.naturalHeight || 32;
+        const ar = iw / ih;
+        if (ar >= 1) { w = Math.round(target); h = Math.round(target / ar); }
+        else         { h = Math.round(target); w = Math.round(target * ar);  }
+      }
 
-      if (Math.random() < FREEFALL_CHANCE) {
-        const x = rand(-40, W + 40);
-        const y = rand(-SKY_SPAWN_PAD, 0);
-        const vx = rand(-0.5, 0.5) + (sceneIdx ? BASE_WIND_SCENE1 : BASE_WIND_SCENE0);
-        const vy = rand(0.6, 1.2);
+      parts.push({
+        x, y, vx, vy,
+        rot: (Math.random()*Math.PI*2) - Math.PI,
+        spin: (Math.random()-0.5) * 0.03 * phys.spin,
+        img, w, h,
+        flip: Math.random() < 0.35 ? -1 : 1,
+        settled: false,
+        phys, key
+      });
+    }
+
+    // public API
+    window.spawnLampLitter = function(sceneIdx = 0, count = 6) {
+      if (!(canvas && canvas.width && LAMP_RECTS.length)) return;
+
+      const W = canvas.width;
+
+      for (let i = 0; i < count; i++) {
+        const sprite = pickSpriteForScene(sceneIdx);
+
+        if (Math.random() < FREEFALL_CHANCE) {
+          const x = rand(-40, W + 40);
+          const y = rand(-SKY_SPAWN_PAD, 0);
+          const vx = rand(-0.5, 0.5) + (sceneIdx ? BASE_WIND_SCENE1 : BASE_WIND_SCENE0);
+          const vy = rand(0.6, 1.2);
+          addPart(x, y, vx, vy, sprite);
+          continue;
+        }
+
+        const rect = pick(LAMP_RECTS);
+        let x = rand(rect.x1 - LAMP_WANDER_PX, rect.x2 + LAMP_WANDER_PX);
+        let y = rect.y1 - rand(20, TOP_SPAWN_PAD);
+        x = Math.max(-60, Math.min(W + 60, x));
+        const vx = rand(-0.6, 0.6) + (sceneIdx ? BASE_WIND_SCENE1 : BASE_WIND_SCENE0);
+        const vy = rand(0.5, 1.15);
+
         addPart(x, y, vx, vy, sprite);
-        continue;
       }
+    };
 
-      const rect = pick(LAMP_RECTS);
-      let x = rand(rect.x1 - LAMP_WANDER_PX, rect.x2 + LAMP_WANDER_PX);
-      let y = rect.y1 - rand(20, TOP_SPAWN_PAD);
-      x = Math.max(-60, Math.min(W + 60, x));
-      const vx = rand(-0.6, 0.6) + (sceneIdx ? BASE_WIND_SCENE1 : BASE_WIND_SCENE0);
-      const vy = rand(0.5, 1.15);
-
-      addPart(x, y, vx, vy, sprite);
+    // jitter
+    let __turbTick = 1.0;
+    function turb(x, y) {
+      return Math.sin((x + __turbTick) * 0.007) * 0.7 +
+             Math.sin((y - __turbTick * 0.6) * 0.013) * 0.3;
     }
-  };
 
-  // jitter
-  let __turbTick = 1.0;
-  function turb(x, y) {
-    return Math.sin((x + __turbTick) * 0.007) * 0.7 +
-           Math.sin((y - __turbTick * 0.6) * 0.013) * 0.3;
-  }
-
-  function lampIndexAtCanvasPoint(x, y){
-    for (let i = 0; i < LAMP_RECTS.length; i++){
-      const r = LAMP_RECTS[i];
-      if (x >= r.x1 && x <= r.x2 && y >= r.y1 && y <= r.y2) return i;
+    function lampIndexAtCanvasPoint(x, y){
+      for (let i = 0; i < LAMP_RECTS.length; i++){
+        const r = LAMP_RECTS[i];
+        if (x >= r.x1 && x <= r.x2 && y >= r.y1 && y <= r.y2) return i;
+      }
+      return -1;
     }
-    return -1;
-  }
 
-  function updateCanvasCursorForLamp(e){
-    const rect = canvas.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
-    const overLamp = lampIndexAtCanvasPoint(x, y) >= 0;
-    canvas.style.cursor = overLamp ? "pointer" : "default";
-  }
-
-  function handleCanvasClick(e){
-    const rect = canvas.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
-    if (lampIndexAtCanvasPoint(x, y) >= 0){
-      window.__toggleLamps?.();
-      e.stopPropagation();
-      e.preventDefault();
+    function updateCanvasCursorForLamp(e){
+      const rect = canvas.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const y = e.clientY - rect.top;
+      const overLamp = lampIndexAtCanvasPoint(x, y) >= 0;
+      canvas.style.cursor = overLamp ? "pointer" : "default";
     }
-  }
 
-  // --- cursor velocity tracker (local to litter canvas)
-let __mx = -1, __my = -1, __mt = 0;
-let __mvx = 0, __mvy = 0;
-let __mouseDown = false;
-
-function __updateMouseVelocity(x, y, t) {
-  if (__mt) {
-    const dt = Math.max(1, t - __mt);          // ms
-    __mvx = (x - __mx) / dt * 16.67;           // px/frame-ish
-    __mvy = (y - __my) / dt * 16.67;
-  }
-  __mx = x; __my = y; __mt = t;
-}
-
-  function handleHoverMove(e) {
-  const rect = canvas.getBoundingClientRect();
-  const x = e.clientX - rect.left;
-  const y = e.clientY - rect.top;
-
-  // track mouse speed
-  __updateMouseVelocity(x, y, e.timeStamp || performance.now());
-
-  // Base feel (tuned for your litter mass)
-  const baseR = 140;           // influence radius
-  const baseK = 0.22;          // impulse strength
-
-  // “Grab/drag” feel when holding the mouse/touch
-  const influenceRadius = __mouseDown ? baseR * 1.6 : baseR;
-  const impulseStrength = __mouseDown ? baseK * 1.8 : baseK;
-
-  // Directional shove along the cursor’s motion
-  const pushX = __mvx * 0.35;
-  const pushY = __mvy * 0.35;
-
-  const r2 = influenceRadius * influenceRadius;
-
-  for (let i = 0; i < parts.length; i++) {
-    const p = parts[i];
-    const dx = p.x - x;
-    const dy = p.y - y;
-    const d2 = dx*dx + dy*dy;
-    if (d2 < r2) {
-      const falloff = 1 - Math.sqrt(d2) / influenceRadius;
-
-      // wake item
-      p.settled = false;
-
-      const mult  = (p.phys?.cursor ?? 1.0);
-      const spinM = (p.phys?.spin   ?? 1.0);
-
-      // Combine gentle radial pull with strong directional push
-      p.vx += (dx * -0.015 + pushX) * impulseStrength * falloff * mult;
-      p.vy += (dy * -0.015 + pushY) * impulseStrength * falloff * mult;
-
-      // tiny spin variation
-      p.spin += (Math.random() - 0.5) * 0.02 * spinM;
+    function handleCanvasClick(e){
+      const rect = canvas.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const y = e.clientY - rect.top;
+      if (lampIndexAtCanvasPoint(x, y) >= 0){
+        window.__toggleLamps?.();
+        e.stopPropagation();
+        e.preventDefault();
+      }
     }
-  }
-}
 
+    // --- cursor velocity tracker (local to litter canvas)
+    let __mx = -1, __my = -1, __mt = 0;
+    let __mvx = 0, __mvy = 0;
+    let __mouseDown = false;
 
- function enableLitterDrag() {
-  // Prefer pointer events for mouse/touch/pen
-  canvas.addEventListener("pointermove", handleHoverMove, { passive: true });
-  canvas.addEventListener("pointermove", updateCanvasCursorForLamp, { passive: true });
-  canvas.addEventListener("click", handleCanvasClick);
+    function __updateMouseVelocity(x, y, t) {
+      if (__mt) {
+        const dt = Math.max(1, t - __mt);          // ms
+        __mvx = (x - __mx) / dt * 16.67;           // px/frame-ish
+        __mvy = (y - __my) / dt * 16.67;
+      }
+      __mx = x; __my = y; __mt = t;
+    }
 
-  // Track "grab" state (feels more controllable)
-  canvas.addEventListener("pointerdown", () => { __mouseDown = true; });
-  window.addEventListener("pointerup",   () => { __mouseDown = false; });
-}
+    function handleHoverMove(e) {
+      const rect = canvas.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const y = e.clientY - rect.top;
 
-  function loop() {
-    if (!(ctx && canvas)) return requestAnimationFrame(loop);
-    const W = canvas.width, H = canvas.height;
-    ctx.clearRect(0, 0, W, H);
+      // track mouse speed
+      __updateMouseVelocity(x, y, e.timeStamp || performance.now());
 
-    __turbTick += 1.0;
+      // Base feel (tuned for your litter mass)
+      const baseR = 140;           // influence radius
+      const baseK = 0.22;          // impulse strength
 
-    for (let i = parts.length - 1; i >= 0; i--) {
-      const p   = parts[i];
-      const phys = p.phys || DEFAULT_PHYS;
+      // “Grab/drag” feel when holding the mouse/touch
+      const influenceRadius = __mouseDown ? baseR * 1.6 : baseR;
+      const impulseStrength = __mouseDown ? baseK * 1.8 : baseK;
 
-      // live wind values each frame
-      const WIND_PUSH = __LITTER_WIND_X;   // ~ 0..0.6 typical
-      const LIFT_PUSH = __LITTER_LIFT;     // only for airborne
-      const sail = (phys?.turb ?? 0.6) * 0.65 + (phys?.lift ?? 0.01) * 10; // “sail-ness”
-      const light = 1.0 / Math.max(0.6, (phys?.g ?? 0.9));                 // lighter = more
+      // Directional shove along the cursor’s motion
+      const pushX = __mvx * 0.35;
+      const pushY = __mvy * 0.35;
 
-      if (!p.settled) {
-        // ---------- AIRBORNE PHYSICS ----------
-        p.vx *= (1 - phys.air);
-        p.vy *= (1 - phys.air * 0.60);
-        p.vy += GRAVITY * phys.g;
-        p.vy -= Math.abs(p.vx) * phys.lift;
+      const r2 = influenceRadius * influenceRadius;
 
-        const jitterX = turb(p.x, p.y) * 0.02 * phys.turb;
-        const jitterY = turb(p.y, p.x) * 0.015 * phys.turb;
-        p.vx += jitterX;
-        p.vy += jitterY * 0.2;
+      for (let i = 0; i < parts.length; i++) {
+        const p = parts[i];
+        const dx = p.x - x;
+        const dy = p.y - y;
+        const d2 = dx*dx + dy*dy;
+        if (d2 < r2) {
+          const falloff = 1 - Math.sqrt(d2) / influenceRadius;
 
-        // breath wind (airborne)
-        p.vx += WIND_PUSH * sail * 0.12;
-        p.vy -= Math.abs(WIND_PUSH) * 0.02 * (phys?.lift ?? 0.01) * 11;
-        p.vy -= LIFT_PUSH * 0.015;
+          // wake item
+          p.settled = false;
 
-        // gust (airborne)
-        if (__LITTER_GUST > 0) {
-          const g = __LITTER_GUST;
-          p.vx += (WIND_PUSH >= 0 ? 1 : -1) * 0.45 * g * light * (0.8 + Math.random()*0.4);
-          p.vy -= 0.10 * g * light * (0.8 + Math.random()*0.4);
+          const mult  = (p.phys?.cursor ?? 1.0);
+          const spinM = (p.phys?.spin   ?? 1.0);
+
+          // Combine gentle radial pull with strong directional push
+          p.vx += (dx * -0.015 + pushX) * impulseStrength * falloff * mult;
+          p.vy += (dy * -0.015 + pushY) * impulseStrength * falloff * mult;
+
+          // tiny spin variation
+          p.spin += (Math.random() - 0.5) * 0.02 * spinM;
         }
+      }
+    }
 
-        p.x   += p.vx;
-        p.y   += p.vy;
-        p.rot += p.spin;
+    function enableLitterDrag() {
+      // Prefer pointer events for mouse/touch/pen
+      canvas.addEventListener("pointermove", handleHoverMove, { passive: true });
+      canvas.addEventListener("pointermove", updateCanvasCursorForLamp, { passive: true });
+      canvas.addEventListener("click", handleCanvasClick);
 
-        // apply spin governor here
-        limitSpin(p);
+      // Track "grab" state (feels more controllable)
+      canvas.addEventListener("pointerdown", () => { __mouseDown = true; });
+      window.addEventListener("pointerup",   () => { __mouseDown = false; });
+    }
 
-        // ground collision
-        if (groundY != null) {
-          const bottom = p.y + (p.h * 0.5);
-          if (bottom >= groundY) {
-            p.y = groundY - (p.h * 0.5);
-            p.vy = 0;
-            p.vx *= phys.impact;
-            p.spin *= phys.impact * 0.9;
-            p.settled = true;
+    function loop() {
+      if (!(ctx && canvas)) return requestAnimationFrame(loop);
+      const W = canvas.width, H = canvas.height;
+      ctx.clearRect(0, 0, W, H);
+
+      __turbTick += 1.0;
+
+      for (let i = parts.length - 1; i >= 0; i--) {
+        const p   = parts[i];
+        const phys = p.phys || DEFAULT_PHYS;
+
+        // live wind values each frame
+        const WIND_PUSH = __LITTER_WIND_X;   // ~ 0..0.6 typical
+        const LIFT_PUSH = __LITTER_LIFT;     // only for airborne
+        const sail = (phys?.turb ?? 0.6) * 0.65 + (phys?.lift ?? 0.01) * 10; // “sail-ness”
+        const light = 1.0 / Math.max(0.6, (phys?.g ?? 0.9));                 // lighter = more
+
+        if (!p.settled) {
+          // ---------- AIRBORNE PHYSICS ----------
+          p.vx *= (1 - phys.air);
+          p.vy *= (1 - phys.air * 0.60);
+          p.vy += GRAVITY * phys.g;
+          p.vy -= Math.abs(p.vx) * phys.lift;
+
+          const jitterX = turb(p.x, p.y) * 0.02 * phys.turb;
+          const jitterY = turb(p.y, p.x) * 0.015 * phys.turb;
+          p.vx += jitterX;
+          p.vy += jitterY * 0.2;
+
+          // breath wind (airborne)
+          p.vx += WIND_PUSH * sail * 0.12;
+          p.vy -= Math.abs(WIND_PUSH) * 0.02 * (phys?.lift ?? 0.01) * 11;
+          p.vy -= LIFT_PUSH * 0.015;
+
+          // gust (airborne)
+          if (__LITTER_GUST > 0) {
+            const g = __LITTER_GUST;
+            p.vx += (WIND_PUSH >= 0 ? 1 : -1) * 0.45 * g * light * (0.8 + Math.random()*0.4);
+            p.vy -= 0.10 * g * light * (0.8 + Math.random()*0.4);
           }
+
+          p.x   += p.vx;
+          p.y   += p.vy;
+          p.rot += p.spin;
+
+          // apply spin governor here
+          limitSpin(p);
+
+          // ground collision
+          if (groundY != null) {
+            const bottom = p.y + (p.h * 0.5);
+            if (bottom >= groundY) {
+              p.y = groundY - (p.h * 0.5);
+              p.vy = 0;
+              p.vx *= phys.impact;
+              p.spin *= phys.impact * 0.9;
+              p.settled = true;
+            }
+          }
+        } else {
+          // ---------- ON-GROUND (SETTLED) PHYSICS ----------
+          // continuous sideways push along the ground (no lift)
+          const baseSlide = (1 - (p.phys?.groundFriction ?? 0.94)); // slipperier → bigger
+          const groundPush = WIND_PUSH * (0.06 + 0.48 * baseSlide) * sail * 0.18;
+          p.vx += groundPush;
+
+          // tiny ground jitter so piles “wake up”
+          p.vx += turb(p.x * 0.6, p.y) * 0.004 * (0.6 + phys.turb*0.5);
+
+          // gust → strong ground kick (no vertical pop)
+          if (__LITTER_GUST > 0) {
+            const g = __LITTER_GUST;
+            p.vx += Math.sign(WIND_PUSH || 1) * 0.35 * g * light * (0.8 + Math.random()*0.4);
+          }
+
+          // integrate & damp
+          p.x   += p.vx;
+          p.rot += p.spin;
+          p.vx  *= (p.phys?.groundFriction ?? FRICTION);
+          p.spin*= (p.phys?.rotFriction    ?? ROT_FRICTION);
+
+          // apply spin governor here too (extra ground damping inside)
+          limitSpin(p);
+
+          // if it started moving enough, mark un-settled so it keeps creeping
+          if (Math.abs(p.vx) > 0.02) p.settled = false;
+
+          // keep clamped to ground line visually
+          if (groundY != null) {
+            const wantY = groundY - (p.h * 0.5);
+            if (Math.abs((p.y - wantY)) > 0.1) p.y = wantY;
+          }
+
+          if (Math.abs(p.vx) < STOP_EPS) p.vx = 0;
+          if (Math.abs(p.spin) < 0.002)  p.spin = 0;
         }
-      } else {
-        // ---------- ON-GROUND (SETTLED) PHYSICS ----------
-        // continuous sideways push along the ground (no lift)
-        const baseSlide = (1 - (phys?.groundFriction ?? 0.94)); // slipperier → bigger
-        const groundPush = WIND_PUSH * (0.06 + 0.48 * baseSlide) * sail * 0.18;
-        p.vx += groundPush;
 
-        // tiny ground jitter so piles “wake up”
-        p.vx += turb(p.x * 0.6, p.y) * 0.004 * (0.6 + phys.turb*0.5);
+        // keep inside horizontal bounds (bounce), still cull if far below
+        handleWalls(p, W);
+        if (p.y > H + 60) { parts.splice(i, 1); continue; }
 
-        // gust → strong ground kick (no vertical pop)
-        if (__LITTER_GUST > 0) {
-          const g = __LITTER_GUST;
-          p.vx += Math.sign(WIND_PUSH || 1) * 0.35 * g * light * (0.8 + Math.random()*0.4);
+        // draw
+        ctx.globalAlpha = 1;
+        ctx.save();
+        ctx.translate(Math.round(p.x), Math.round(p.y));
+        ctx.rotate(p.rot);
+        ctx.scale(p.flip, 1);
+
+        if (p.img) {
+          ctx.imageSmoothingEnabled = true;
+          ctx.imageSmoothingQuality = "high";
+          ctx.drawImage(p.img, -p.w/2, -p.h/2, p.w, p.h);
+        } else {
+          ctx.fillStyle = "rgba(230,230,230,1)";
+          const r = 2, x0 = -p.w/2, y0 = -p.h/2, w = p.w, h = p.h;
+          ctx.beginPath();
+          ctx.moveTo(x0+r, y0);
+          ctx.arcTo(x0+w, y0,   x0+w, y0+h, r);
+          ctx.arcTo(x0+w, y0+h, x0,   y0+h, r);
+          ctx.arcTo(x0,   y0+h, x0,   y0,   r);
+          ctx.arcTo(x0,   y0,   x0+w, y0,   r);
+          ctx.closePath();
+          ctx.fill();
         }
-
-        // integrate & damp
-        p.x   += p.vx;
-        p.rot += p.spin;
-        p.vx  *= (p.phys?.groundFriction ?? FRICTION);
-        p.spin*= (p.phys?.rotFriction    ?? ROT_FRICTION);
-
-        // apply spin governor here too (extra ground damping inside)
-        limitSpin(p);
-
-        // if it started moving enough, mark un-settled so it keeps creeping
-        if (Math.abs(p.vx) > 0.02) p.settled = false;
-
-        // keep clamped to ground line visually
-        if (groundY != null) {
-          const wantY = groundY - (p.h * 0.5);
-          if (Math.abs((p.y - wantY)) > 0.1) p.y = wantY;
-        }
-
-        if (Math.abs(p.vx) < STOP_EPS) p.vx = 0;
-        if (Math.abs(p.spin) < 0.002)  p.spin = 0;
+        ctx.restore();
       }
 
-      // keep inside horizontal bounds (bounce), still cull if far below
-      handleWalls(p, W);
-      if (p.y > H + 60) { parts.splice(i, 1); continue; }
+      // natural gust decay
+      __LITTER_GUST *= 0.86;
 
-      // draw
-      ctx.globalAlpha = 1;
-      ctx.save();
-      ctx.translate(Math.round(p.x), Math.round(p.y));
-      ctx.rotate(p.rot);
-      ctx.scale(p.flip, 1);
-
-      if (p.img) {
-        ctx.imageSmoothingEnabled = true;
-        ctx.imageSmoothingQuality = "high";
-        ctx.drawImage(p.img, -p.w/2, -p.h/2, p.w, p.h);
-      } else {
-        ctx.fillStyle = "rgba(230,230,230,1)";
-        const r = 2, x0 = -p.w/2, y0 = -p.h/2, w = p.w, h = p.h;
-        ctx.beginPath();
-        ctx.moveTo(x0+r, y0);
-        ctx.arcTo(x0+w, y0,   x0+w, y0+h, r);
-        ctx.arcTo(x0+w, y0+h, x0,   y0+h, r);
-        ctx.arcTo(x0,   y0+h, x0,   y0,   r);
-        ctx.arcTo(x0,   y0,   x0+w, y0,   r);
-        ctx.closePath();
-        ctx.fill();
-      }
-      ctx.restore();
+      requestAnimationFrame(loop);
     }
 
-    // natural gust decay
-    __LITTER_GUST *= 0.86;
+    function init() {
+      canvas = document.getElementById("litterCanvas");
+      if (!canvas) return;
+      ctx = canvas.getContext("2d", { alpha: true });
+      canvas.style.touchAction = "none";
+      canvas.style.pointerEvents = "auto";
+      sizeCanvas();
+      window.addEventListener("resize", sizeCanvas);
+      enableLitterDrag();
+      requestAnimationFrame(loop);
+    }
 
-    requestAnimationFrame(loop);
-  }
+    window.__refreshLampLitterRects = cacheLampRects;
+    window.__refreshLampGroundLine  = cacheGroundLine;
 
-  function init() {
-    canvas = document.getElementById("litterCanvas");
-    if (!canvas) return;
-    ctx = canvas.getContext("2d", { alpha: true });
-    canvas.style.touchAction = "none";
-    canvas.style.pointerEvents = "auto";
-    sizeCanvas();
-    window.addEventListener("resize", sizeCanvas);
-    enableLitterDrag();
-    requestAnimationFrame(loop);
-  }
-
-  window.__refreshLampLitterRects = cacheLampRects;
-  window.__refreshLampGroundLine  = cacheGroundLine;
-
-  document.addEventListener("DOMContentLoaded", init);
-  init();
-  preloadSprites();
-})();
+    document.addEventListener("DOMContentLoaded", init);
+    init();
+    preloadSprites();
+  })();
 
 
   /* ---------- HELPERS ---------- */
@@ -709,9 +711,16 @@ function __updateMouseVelocity(x, y, t) {
       css.setProperty("--gScaleX", config.gScaleX || "1");
       css.setProperty("--gScaleY", config.gScaleY || "1");
       css.setProperty("--hue",     config.hue || "40deg");
-
+css.setProperty("--sat",        config.sat || "1");       
+css.setProperty("--brightBase", config.brightBase || "1");
       wrap.classList.toggle("isLantern", !!config.beamCircle);
       wrap.classList.toggle("isStreet",  !config.beamCircle);
+
+      /* NEW: make the overlay react quicker */
+      const glow = wrap.querySelector(".lamp-glow");
+      const beam = wrap.querySelector(".lamp-beam");
+      if (glow) glow.style.transition = `opacity ${BEAM_FADE_S}s linear, filter ${BEAM_FADE_S}s linear`;
+      if (beam) beam.style.transition = `opacity ${BEAM_FADE_S}s linear, filter ${BEAM_FADE_S}s linear`;
     });
 
     window.__refreshLampLitterRects?.();
@@ -780,29 +789,48 @@ function __updateMouseVelocity(x, y, t) {
   };
 
   /* Late Streetlight (harsher, colder) — scene 3 */
-  const LATE_STREET_CFG = {
-    ...STREETLIGHT_CFG,
-    gScaleX: "1.60",
-    gScaleY: "0.68",
-    beamW: "360px",
-    beamH: "460px",
-    beamY: "18px",
-    hue: "215deg",
-    glowOn: "0.88",
-    beamOn: "0.96"
-  };
+/* Neon PINK (magenta) cone + glow */
+const NEON_PINK_CFG = {
+  ...STREETLIGHT_CFG,
+  hue: "320deg",     // magenta
+  sat: "2.2",          // was 1.85
+  brightBase: "1.55",  // was 1.35
+  beamW: "390px",      // was 360
+  beamH: "500px",      // was 460
+  beamY: "6px",        // drop closer to head = brighter top
+  glowOn: "1.00", beamOn: "1.00"
+};
+
+/* Neon GREEN cone + glow */
+const NEON_GREEN_CFG = {
+  ...STREETLIGHT_CFG,
+  hue: "130deg",     // green
+  sat: "1.85",
+  brightBase: "1.30",
+  beamW: "360px", beamH: "460px", beamY: "16px",
+  glowOn: "1.00", beamOn: "1.00"
+};
 
   /* degraders (banding/haze/jitter) */
-  function __setLampDegrade({ bands=0, haze=0, jitter=0 }){
-    document.querySelectorAll("#lampsRow .lampWrap").forEach(w=>{
-      w.style.setProperty("--beamBands", String(Math.max(0, Math.min(1, bands))));
-      w.style.setProperty("--beamHaze",  String(Math.max(0, Math.min(1, haze))));
-      const glow = w.querySelector(".lamp-glow");
-      const beam = w.querySelector(".lamp-beam");
-      if (glow) glow.style.filter = `brightness(${(1 + jitter*0.08).toFixed(3)})`;
-      if (beam) beam.style.filter = `brightness(${(1 + jitter*0.10).toFixed(3)})`;
-    });
-  }
+ function __setLampDegrade({ bands=0, haze=0, jitter=0 }){
+  document.querySelectorAll("#lampsRow .lampWrap").forEach(w=>{
+    w.style.setProperty("--beamBands", String(Math.max(0, Math.min(1, bands))));
+    w.style.setProperty("--beamHaze",  String(Math.max(0, Math.min(1, haze))));
+
+    const hue   = w.style.getPropertyValue("--hue") || "0deg";
+    const sat   = parseFloat(w.style.getPropertyValue("--sat") || "1");
+    const baseB = parseFloat(w.style.getPropertyValue("--brightBase") || "1");
+
+    const glowB = (1 + jitter*0.08) * baseB;
+    const beamB = (1 + jitter*0.10) * baseB;
+
+    const glow = w.querySelector(".lamp-glow");
+    const beam = w.querySelector(".lamp-beam");
+    if (glow) glow.style.filter = `hue-rotate(${hue}) saturate(${sat}) brightness(${glowB.toFixed(3)})`;
+    if (beam) beam.style.filter = `hue-rotate(${hue}) saturate(${sat}) brightness(${beamB.toFixed(3)})`;
+  });
+}
+
   function __setLampVisualIntensityIfOn(base){
     const t = window.__lampsOn ? Math.max(0, Math.min(1, base)) : 0;
     __applyLampIntensity(t);
@@ -869,9 +897,13 @@ function __updateMouseVelocity(x, y, t) {
     const segDur = XFADE_SEG_DUR; // 0.25
     const tl = gsap.timeline({ paused: true });
 
-    // Scene switches aligned exactly to CUTs (quarter points)
-    const tToStreet = CUT1 + 0.0001; // 0.2501
-    const tToLate   = CUT2 + 0.0001; // 0.5001
+    // Sprite crossfades aligned to CUTs (quarter points)
+    const tToStreet = CUT1 + 0.0001; // 0.2501 (images)
+    const tToLate   = CUT2 + 0.0001; // 0.5001 (images)
+
+    // NEW: switch the BEAM/overlays a bit earlier than sprites
+    const tToStreetCfg = Math.max(0, CUT1 - BEAM_LEAD);
+    const tToLateCfg   = Math.max(0, CUT2 - BEAM_LEAD);
 
     // Init with lantern
     tl.add(() => {
@@ -880,19 +912,22 @@ function __updateMouseVelocity(x, y, t) {
       __setLampsOn(keep, { noFlicker: true });
     }, 0);
 
-    // Scene 1 → streetlight
+    // NEW: Early overlay config switches before sprite fades
     tl.add(() => {
       const keep = window.__lampsOn;
       setLampConfig("#lampsScene", STREETLIGHT_CFG);
       __setLampsOn(keep, { noFlicker: true });
-    }, tToStreet);
+    }, tToStreetCfg);
 
-    // Scene 2 → late streetlight (harsher)
-    tl.add(() => {
-      const keep = window.__lampsOn;
-      setLampConfig("#lampsScene", LATE_STREET_CFG);
-      __setLampsOn(keep, { noFlicker: true });
-    }, tToLate);
+ tl.add(() => {
+  const keep = window.__lampsOn;
+  setLampConfig("#lampsScene", NEON_PINK_CFG);     // ← for magenta
+  // setLampConfig("#lampsScene", NEON_GREEN_CFG); // ← for green
+  __setLampsOn(keep, { noFlicker: true });
+
+  // ensure filters apply immediately even before onUpdate runs
+  __setLampDegrade({ bands: 0, haze: 0, jitter: 0.001 });
+}, tToLateCfg);
 
     function fadeLamps(t, a, b){
       document.querySelectorAll("#lampsRow .lampWrap").forEach(w => {
@@ -914,7 +949,7 @@ function __updateMouseVelocity(x, y, t) {
         .to(B, {opacity:1, duration:segDur, ease:"none"}, t);
     }
 
-    // segment starts: 0.00, 0.25, 0.50
+    // segment starts: 0.00, 0.25, 0.50 (for images/parallax/ground only)
     for (let i = 0; i < segs; i++){
       const t = XFADE_HOLD_START + i * segDur;
       fadeLamps(t, i, i + 1);
@@ -1012,34 +1047,34 @@ function __updateMouseVelocity(x, y, t) {
     /* ======= SOOT BLOBS (pre-blackout spread) ======= */
     const soot = [];              // {x,y,r,dr,a}
     let sootCfg = { target:0, seed:0, grow:0, jitter:0.4, maxAlpha:0.98 };
-// === draw the soot blobs ===
-function renderSoot(ctx, W, H){
-  if (!soot.length) return;
-  ctx.save();
-  // slightly heavier blend to darken scene without banding
-  ctx.globalCompositeOperation = "multiply";
+    // === draw the soot blobs ===
+    function renderSoot(ctx, W, H){
+      if (!soot.length) return;
+      ctx.save();
+      // slightly heavier blend to darken scene without banding
+      ctx.globalCompositeOperation = "multiply";
 
-  for (let i = 0; i < soot.length; i++){
-    const b = soot[i];               // {x,y,r,dr,a}
-    const r = Math.max(4, b.r);
-    const g = ctx.createRadialGradient(b.x, b.y, r*0.15, b.x, b.y, r);
-    const a = Math.max(0, Math.min(1, b.a));
+      for (let i = 0; i < soot.length; i++){
+        const b = soot[i];               // {x,y,r,dr,a}
+        const r = Math.max(4, b.r);
+        const g = ctx.createRadialGradient(b.x, b.y, r*0.15, b.x, b.y, r);
+        const a = Math.max(0, Math.min(1, b.a));
 
-    // soft center → feathered edge
-    g.addColorStop(0.00, `rgba(10,10,12,${a})`);
-    g.addColorStop(0.35, `rgba(10,10,12,${a*0.75})`);
-    g.addColorStop(0.70, `rgba(10,10,12,${a*0.40})`);
-    g.addColorStop(1.00, `rgba(10,10,12,0)`);
+        // soft center → feathered edge
+        g.addColorStop(0.00, `rgba(10,10,12,${a})`);
+        g.addColorStop(0.35, `rgba(10,10,12,${a*0.75})`);
+        g.addColorStop(0.70, `rgba(10,10,12,${a*0.40})`);
+        g.addColorStop(1.00, `rgba(10,10,12,0)`);
 
-    ctx.fillStyle = g;
-    ctx.beginPath();
-    ctx.arc(b.x, b.y, r, 0, Math.PI * 2);
-    ctx.closePath();
-    ctx.fill();
-  }
+        ctx.fillStyle = g;
+        ctx.beginPath();
+        ctx.arc(b.x, b.y, r, 0, Math.PI * 2);
+        ctx.closePath();
+        ctx.fill();
+      }
 
-  ctx.restore();
-}
+      ctx.restore();
+    }
 
     function __smokeSetSoot(cfg){
       sootCfg = { ...sootCfg, ...(cfg||{}) };
@@ -1279,6 +1314,7 @@ function renderSoot(ctx, W, H){
     buildFarParallax();
     buildNearParallax();
     buildLampRow(5);
+    __seedInitialLitter();
 
     // Emitters (scenes 0–2)
     window.__SMOKE_EMITTERS[0] = [
@@ -1290,30 +1326,28 @@ function renderSoot(ctx, W, H){
       { xPct: 8, yPct: 39, rate: 18, depth: 'near' },
       { xPct: 66, yPct: 38, rate: 20, depth: 'near' },
       { xPct: 23, yPct: 40, rate: 18, depth: 'near' },
-      { xPct: 86, yPct: 72, rate: 1, depth: 'far' },
+      { xPct: 86, yPct: 72, rate: 1,  depth: 'far' },
 
       { xPct: 70, yPct: 20, rate: 6, depth: 'far' },
       { xPct: 57, yPct: 36, rate: 7, depth: 'far' },
-     
     ];
     window.__SMOKE_EMITTERS[2] = [
-    
       { xPct: 16, yPct: 22, rate: 15, depth: 'far' },
       { xPct: 88, yPct: 22, rate: 17, depth: 'far' },
       { xPct: 57, yPct: 42, rate: 20, depth: 'far' },
-      
+
       { xPct: 28, yPct: 19, rate: 20, depth: 'far' },
-       { xPct: 21, yPct: 45, rate: 20, depth: 'far' },
+      { xPct: 21, yPct: 45, rate: 20, depth: 'far' },
       { xPct: 71, yPct: 30, rate: 10, depth: 'far' },
-    
+
       { xPct: 65, yPct: 29, rate: 10, depth: 'far' },
       { xPct: 78, yPct: 27, rate: 10, depth: 'far' },
       { xPct: 37, yPct: 40, rate: 10, depth: 'far' },
     ];
 
     setLampConfig("#lampsScene", LANTERN_CFG);
-   __setLampsOn(true, { noFlicker:true }); // lantern lit on arrival
-   __applyLampIntensity(1); 
+    __setLampsOn(true, { noFlicker:true }); // lantern lit on arrival
+    __applyLampIntensity(1);
 
     window.__refreshLampGroundLine?.();
     window.__refreshLampLitterRects?.();
@@ -1331,46 +1365,47 @@ function renderSoot(ctx, W, H){
       anticipatePin: 1,
 
       /* ---------- UPDATED CALLBACKS (respect latch) ---------- */
-    /* ---------- UPDATED CALLBACKS (direction-aware city-clicks) ---------- */
-onEnter(self){
-  // Entering lamps from above (from city) → city clicks OFF inside lamps
-  disableCityClicks();
-  if (!window.__lampsBlackHold) __blackoutOffNow(); // clear only if not latched
-},
 
-onEnterBack(self){
-  // Re-entering lamps from below (from outro) → still keep city clicks OFF
-  disableCityClicks();
-  if (window.__lampsBlackHold) __blackoutTo(1); else __blackoutOffNow();
-},
+      onEnter(self){
+        // Entering lamps from above (from city) → city clicks OFF inside lamps
+        disableCityClicks();
+        if (!window.__lampsBlackHold) __blackoutOffNow(); // clear only if not latched
 
-onLeave(self){
-  // Leaving lamps:
-  if (self.direction === 1){
-    // going DOWN → into OUTRO → keep city clicks OFF so outro can be clicked
-    disableCityClicks();
-  } else {
-    // going UP → back into CITY → re-enable city clicks
-    enableCityClicks();
-  }
+        if (!__seededOnEnter) { __seedInitialLitter(); __seededOnEnter = true; }
+      },
 
-  // keep your blackout logic as-is
-  if (self.direction === 1 && window.__lampsBlackHold) {
-    __blackoutTo(1);           // keep it black for the outro
-  } else {
-    __blackoutOffNow();
-    __clearBlackPrograms();
-  }
-},
+      onEnterBack(self){
+        // Re-entering lamps from below (from outro) → still keep city clicks OFF
+        disableCityClicks();
+        if (window.__lampsBlackHold) __blackoutTo(1); else __blackoutOffNow();
+      },
 
-onLeaveBack(self){
-  // Leaving lamps upward (entering city from below) → make sure city clicks are ON
-  enableCityClicks();
-  __blackoutOffNow();
-  __clearBlackPrograms();
-  window.__lampsBlackHold = false; // release latch when fully out above
-},
+      onLeave(self){
+        // Leaving lamps:
+        if (self.direction === 1){
+          // going DOWN → into OUTRO → keep city clicks OFF so outro can be clicked
+          disableCityClicks();
+        } else {
+          // going UP → back into CITY → re-enable city clicks
+          enableCityClicks();
+        }
 
+        // keep your blackout logic as-is
+        if (self.direction === 1 && window.__lampsBlackHold) {
+          __blackoutTo(1);           // keep it black for the outro
+        } else {
+          __blackoutOffNow();
+          __clearBlackPrograms();
+        }
+      },
+
+      onLeaveBack(self){
+        // Leaving lamps upward (entering city from below) → make sure city clicks are ON
+        enableCityClicks();
+        __blackoutOffNow();
+        __clearBlackPrograms();
+        window.__lampsBlackHold = false; // release latch when fully out above
+      },
 
       onUpdate(self){
         const p = self.progress;       // 0..1 across the long pin
@@ -1387,17 +1422,20 @@ onLeaveBack(self){
 
         const [sceneIdx, sProg] = sceneLocalProgress(p);
 
-        const artScene = Math.min(sceneIdx, 2);
+        // OPTIONAL sync: make smoke adopt the next scene a bit earlier to match beam lead (NEW)
+        const pForSmoke = Math.min(1, Math.max(0, p + BEAM_LEAD));
+        const [smokeScene] = sceneLocalProgress(pForSmoke);
+        const artScene = Math.min(smokeScene, 2);
         window.__smokeSetScene?.(artScene);
         window.__smokeSetWind?.((LT.wind ?? 0)*0.02);
 
-      if (window.__lampsUserOverride == null) {
-   // Auto-ON for scenes 0,1,2 (lantern + streetlights); blackout scene (3) handled below
-   const shouldBeOn = (sceneIdx <= 2);
-   if (shouldBeOn !== window.__lampsOn) {
-     __setLampsOn(shouldBeOn, { noFlicker:true });
-   }
- }
+        if (window.__lampsUserOverride == null) {
+          // Auto-ON for scenes 0,1,2 (lantern + streetlights); blackout scene (3) handled below
+          const shouldBeOn = (sceneIdx <= 2);
+          if (shouldBeOn !== window.__lampsOn) {
+            __setLampsOn(shouldBeOn, { noFlicker:true });
+          }
+        }
 
         // Degradation & intensity program + BLACKOUT LATCH BEHAVIOR
         if (sceneIdx === 1){
@@ -1518,11 +1556,11 @@ onLeaveBack(self){
         window.__lampFliers?.update();
 
         // spawn litter
-        while (LT.acc > 85){
-          const base  = 4 + (Math.random()*4|0);
-          const count = Math.max(1, Math.round(base * (LT.spawnMult ?? 1)));
+        while (LT.acc > 55){
+          const base  = 7 + (Math.random()*6|0);
+          const count = Math.max(1, Math.round(base * (LT.spawnMult ?? 1) * 1.25)); // +25%
           window.spawnLampLitter?.(artScene, count);
-          LT.acc -= 85;
+          LT.acc -= 55;
         }
 
         // lock parallax x each tick
@@ -1553,7 +1591,71 @@ onLeaveBack(self){
   function __seedInitialLitter(){
     requestAnimationFrame(()=>{
       window.__refreshLampLitterRects?.();
-      window.spawnLampLitter?.(0, 28);
+      window.spawnLampLitter?.(0, 60);
     });
   }
+})();
+// ---- Stars fade-out when Lamps scene begins ----
+// Stars: shimmer ramp → gentle fade by Lamps "stage 1" (progress-based)
+// ---- Stars: shimmer ramp → fade out by end of Scene 0 (CUT1) ----
+(() => {
+  const STARS = "#bgStars";
+  const starsEl = document.querySelector(STARS);
+  if (!starsEl) return;
+  if (window.__STARS_FADE_BIND__) return; // idempotent guard
+  window.__STARS_FADE_BIND__ = true;
+
+  // Progress cutoffs: [Scene0 start, Scene0 end(CUT1), Scene1 mid, Scene2 mid, Scene3 end]
+  const CUTS = [0.00, 0.25, 0.55, 0.80, 1.00];
+
+  // Fallback if computePinLenPx isn't in scope yet
+  const pinLenPx = (typeof computePinLenPx === "function")
+    ? computePinLenPx()
+    : Math.round(window.innerHeight * 20); // ~2000vh default
+
+  // Start visible & calm
+  gsap.set(STARS, { opacity: 1, pointerEvents: "none" });
+  window.__bgStars__?.setShimmer?.(0);
+
+  ScrollTrigger.create({
+    trigger: "#lampsScene",
+    start: "top top",
+    end: () => "+=" + pinLenPx,
+    scrub: true,
+
+    onUpdate(self){
+      const p = self.progress; // 0..1 across lamps pin
+
+      // Fade window: from a little before end of Scene 0 → exactly at CUT1
+      const cut1       = CUTS[1];   // 0.25
+      const FADE_LEN   = 0.16;      // how long the fade lasts (in progress units)
+      const FADE_START = Math.max(0, cut1 - FADE_LEN);
+      const FADE_END   = cut1;
+      const ease       = t => t*t*(3-2*t);
+
+      // Opacity: 1 → 0 over [FADE_START..FADE_END], scrub-safe & reversible
+      let op;
+      if (p <= FADE_START)       op = 1;
+      else if (p >= FADE_END)    op = 0;
+      else {
+        const t = (p - FADE_START) / Math.max(1e-6, (FADE_END - FADE_START));
+        op = 1 - ease(t);
+      }
+      gsap.set(STARS, { opacity: op });
+
+      // Shimmer: ramp up through Scene 0, then taper during the fade
+      const preRamp  = (FADE_START > 0)
+        ? Math.max(0, Math.min(1, p / FADE_START))
+        : 1;
+      const inFade   = Math.max(0, Math.min(1, (p - FADE_START) / Math.max(1e-6, (FADE_END - FADE_START))));
+      const shimmer  = (0.25 + 0.75 * preRamp) * (1 - 0.85 * ease(inFade));
+
+      window.__bgStars__?.setShimmer?.(shimmer);
+    }
+  });
+
+  // Recompute on resize so the pin length stays accurate
+  window.addEventListener("resize", () => {
+    ScrollTrigger.refresh();
+  });
 })();

@@ -89,7 +89,7 @@ const ALTITUDE = {
   const GROUND_OFFSET = -16;
 
   // spawn & tuning
-  const PLANE = { max: 2, gapMs:[6000,12000], speed:[70,105], amp:[10,24],  freq:[0.5,0.9],  size:[16,22] };
+  const PLANE = { max: 2, gapMs:[6000,6000], speed:[70,105], amp:[10,24],  freq:[0.5,0.9],  size:[16,22] };
   const DRONE = { max: 3, gapMs:[3500, 7000], speed:[45, 70], amp:[ 8,16],  freq:[0.9,1.5],  size:[12,16] };
   const MAX_WRECKS = 140;
   const MAX_ACTORS = 10;
@@ -900,7 +900,7 @@ function lampBand(){
   }
 
   function maybeSpawn(now, seg){
-    const wantPlane = (seg === 0) || (seg===1 && sceneProg < 0.45);
+    const wantPlane = true;
     const wantDrone = (seg >= 1);
 
     if (actors.length < MAX_ACTORS){
@@ -950,7 +950,7 @@ function lampBand(){
       const seg = segFromScene(currentScene, sceneProg);
       if (seg !== lastSeg){
         actors.forEach(a=>{
-          const ok = (a.type==="plane" && seg<=1) || (a.type==="drone" && seg>=1);
+          const ok = (a.type === "plane") || (a.type === "drone" && seg >= 1);
           if (!ok && a.state==="fly") a.state="retire";
         });
         const now = performance.now();

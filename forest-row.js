@@ -1985,6 +1985,21 @@ L3.style.opacity = c(o3).toFixed(3);
 })();
 
 /* ---------- BACKGROUND STARS (fade in Mid2, persist in Bare) ---------- */
+
+/* === add near the top of BackgroundStars === */
+let shimmerBoost = 0; // 0..1, driven by ScrollTrigger before fade
+let opacityOverride = null; // null = ignore; else 0..1 hard set
+
+/* expose minimal API */
+window.__bgStars__ = window.__bgStars__ || {};
+window.__bgStars__.setShimmer = (v=0) => { shimmerBoost = Math.max(0, Math.min(1, v)); };
+window.__bgStars__.setOpacity = (v=null) => {
+  opacityOverride = (v==null ? null : Math.max(0, Math.min(1, v)));
+  if (wrap && v!=null) wrap.style.opacity = String(opacityOverride);
+};
+
+
+
 (function BackgroundStars(){
   let built = false, wrap, cvs, ctx, stars = [], w = 0, h = 0;
 
@@ -2046,13 +2061,76 @@ L3.style.opacity = c(o3).toFixed(3);
     cvs = document.createElement("canvas");
     wrap.appendChild(cvs);
     bg.appendChild(wrap);
-
+wrap.style.opacity = "0";  
     ctx = cvs.getContext("2d");
     size(); makeStars();
 
     window.addEventListener("resize", ()=>{ size(); makeStars(stars.length); });
     built = true;
   }
+/* === add after build(); start the loop once === */
+function loop(ts){
+  if (!ctx || !cvs) return;
+  draw(ts || performance.now());
+  requestAnimationFrame(loop);
+}
+if (!built) { build(); requestAnimationFrame(loop); }
+
+/* === renderer with shimmer burst === */
+function draw(ts){
+  ctx.clearRect(0,0,w,h);
+
+  // background fade (very subtle) so boosted shimmer “glows” a bit
+  // optional: comment out if you don’t want a faint film
+  ctx.globalAlpha = 1;
+  // ctx.fillStyle = "rgba(0,0,16,0.05)";
+  // ctx.fillRect(0,0,w,h);
+
+  for (let i=0;i<stars.length;i++){
+    const s = stars[i];
+
+    // drift horizontally
+    s.x += s.drift;
+    if (s.x < -2) s.x = w+2;
+    if (s.x > w+2) s.x = -2;
+
+    // base twinkle
+    const t = ts * 0.001;                            // seconds
+    const twSpeed = s.tw * (0.4 + 1.6*shimmerBoost); // faster when boosted
+    const pulse = 0.5 + 0.5 * Math.sin(s.ph + t*twSpeed*Math.PI*2);
+
+    // brightness & radius modulation
+    const baseB = s.b;                                // 0.35..1.0
+    const boostB = baseB * (1 + 1.6*shimmerBoost);    // brighter with boost
+    const b = Math.min(1, boostB * (0.75 + 0.25*pulse) * s.yFade);
+
+    const baseR = s.r;                                // 0.5..1.9
+    const r = baseR * (0.85 + 0.35*pulse) * (1 + 0.8*shimmerBoost);
+
+    // soft glow: outer halo then inner core
+    // outer halo
+    ctx.globalAlpha = 0.35 * b;
+    const grad = ctx.createRadialGradient(s.x, s.y, 0, s.x, s.y, r*3.5);
+    grad.addColorStop(0, "rgba(255,255,255,1)");
+    grad.addColorStop(1, "rgba(255,255,255,0)");
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.arc(s.x, s.y, r*3.5, 0, Math.PI*2);
+    ctx.fill();
+
+    // inner core
+    ctx.globalAlpha = Math.min(1, 0.75 * b);
+    ctx.fillStyle = "white";
+    ctx.beginPath();
+    ctx.arc(s.x, s.y, r, 0, Math.PI*2);
+    ctx.fill();
+  }
+
+  // if a hard opacity is set via API, apply to the wrapper
+  if (opacityOverride != null && wrap) {
+    wrap.style.opacity = String(opacityOverride);
+  }
+}
 
   function clear(){ ctx.clearRect(0,0,w,h); }
 
@@ -2068,6 +2146,9 @@ const segT = (seg === 0) ? (forestP/(1/3))
             : (seg === 1) ? ((forestP-1/3)/(1/3))
                           : ((forestP-2/3)/(1/3));
 const easeInOut = t => t*t*(3-2*t);
+
+
+
 const t = Math.max(0, Math.min(1, easeInOut(segT)));
 
 // ---- APPEARANCE KNOBS ----
@@ -2078,15 +2159,19 @@ const SEG2_BASE_OP  = 0.15; // base opacity at ramp start
 const SEG2_PEAK_OP  = 1.00; // peak opacity by Bare
 
 let op = 0;
-if (seg === 1) {
-  // late Mid-2 whisper
-  if (segT >= LATE_MID2_T) op = LATE_MID2_OP;
-} else if (seg === 2) {
-  // delay the ramp so it doesn't pop immediately at Seg2 start
-  const td = Math.max(0, (segT - SEG2_DELAY) / (1 - SEG2_DELAY)); // 0..1
-  const e  = easeInOut(td);
-  op = SEG2_BASE_OP + (SEG2_PEAK_OP - SEG2_BASE_OP) * e;
-}
+
+  if (seg === 1) {
+    // late Mid-2 whisper only
+    if (segT >= LATE_MID2_T) op = LATE_MID2_OP;
+  } else if (seg === 2) {
+    // ramp in Mid-2 → Bare
+    const td = Math.max(0, (segT - SEG2_DELAY) / (1 - SEG2_DELAY)); // 0..1
+    const e  = easeInOut(td);
+    op = SEG2_BASE_OP + (SEG2_PEAK_OP - SEG2_BASE_OP) * e;
+  }
+
+  // Set wrapper opacity (reverse scroll works automatically)
+ 
 // seg 0 stays at 0
 
 
@@ -2111,6 +2196,8 @@ if (seg === 1) {
       ctx.filter = "none";
     }
     ctx.restore();
+     wrap.style.opacity = op.toFixed(3);
+
   }
 
   window.__stars__ = { build, update };
