@@ -1596,66 +1596,63 @@ const NEON_GREEN_CFG = {
   }
 })();
 // ---- Stars fade-out when Lamps scene begins ----
-// Stars: shimmer ramp → gentle fade by Lamps "stage 1" (progress-based)
-// ---- Stars: shimmer ramp → fade out by end of Scene 0 (CUT1) ----
+// ---- Stars: shimmer ramp + fade by end of Scene 0, while darkening bg ----
 (() => {
   const STARS = "#bgStars";
-  const starsEl = document.querySelector(STARS);
-  if (!starsEl) return;
-  if (window.__STARS_FADE_BIND__) return; // idempotent guard
+  if (document.querySelector(STARS) == null) return;
+  if (window.__STARS_FADE_BIND__) return;
   window.__STARS_FADE_BIND__ = true;
 
-  // Progress cutoffs: [Scene0 start, Scene0 end(CUT1), Scene1 mid, Scene2 mid, Scene3 end]
-  const CUTS = [0.00, 0.25, 0.55, 0.80, 1.00];
-
-  // Fallback if computePinLenPx isn't in scope yet
+  const CUTS = [0.00, 0.25, 0.55, 0.80, 1.00];  // CUT1 = end of Scene 0
   const pinLenPx = (typeof computePinLenPx === "function")
     ? computePinLenPx()
-    : Math.round(window.innerHeight * 20); // ~2000vh default
+    : Math.round(window.innerHeight * 20);
 
-  // Start visible & calm
+  const clamp01 = x => Math.max(0, Math.min(1, x));
+  const ease    = t => t*t*(3-2*t);
+
+  // start visible
   gsap.set(STARS, { opacity: 1, pointerEvents: "none" });
   window.__bgStars__?.setShimmer?.(0);
+  window.__grade__?.build?.();
 
   ScrollTrigger.create({
     trigger: "#lampsScene",
     start: "top top",
     end: () => "+=" + pinLenPx,
     scrub: true,
-
     onUpdate(self){
-      const p = self.progress; // 0..1 across lamps pin
+      const p = self.progress; // 0..1 across Lamps pin
 
-      // Fade window: from a little before end of Scene 0 → exactly at CUT1
-      const cut1       = CUTS[1];   // 0.25
-      const FADE_LEN   = 0.16;      // how long the fade lasts (in progress units)
-      const FADE_START = Math.max(0, cut1 - FADE_LEN);
-      const FADE_END   = cut1;
-      const ease       = t => t*t*(3-2*t);
+      /* ---------- (A) Stars fade by end of Scene 0 ---------- */
+      const cut1 = CUTS[1];        // 0.25
+      const FADE_LEN = 0.16;       // length of fade window
+      const FS = Math.max(0, cut1 - FADE_LEN);
+      const FE = cut1;
 
-      // Opacity: 1 → 0 over [FADE_START..FADE_END], scrub-safe & reversible
       let op;
-      if (p <= FADE_START)       op = 1;
-      else if (p >= FADE_END)    op = 0;
-      else {
-        const t = (p - FADE_START) / Math.max(1e-6, (FADE_END - FADE_START));
-        op = 1 - ease(t);
-      }
+      if (p <= FS) op = 1;
+      else if (p >= FE) op = 0;
+      else op = 1 - ease((p - FS) / Math.max(1e-6, FE - FS));
       gsap.set(STARS, { opacity: op });
 
-      // Shimmer: ramp up through Scene 0, then taper during the fade
-      const preRamp  = (FADE_START > 0)
-        ? Math.max(0, Math.min(1, p / FADE_START))
-        : 1;
-      const inFade   = Math.max(0, Math.min(1, (p - FADE_START) / Math.max(1e-6, (FADE_END - FADE_START))));
-      const shimmer  = (0.25 + 0.75 * preRamp) * (1 - 0.85 * ease(inFade));
-
+      // shimmer rises through scene 0, then eases away as stars fade
+      const preRamp = (FS > 0) ? clamp01(p / FS) : 1;
+      const inFade  = clamp01((p - FS) / Math.max(1e-6, FE - FS));
+      const shimmer = (0.25 + 0.75 * preRamp) * (1 - 0.85 * ease(inFade));
       window.__bgStars__?.setShimmer?.(shimmer);
+
+      /* ---------- (B) Background darkening tied to same progress ---------- */
+      // Darken from 0 → 0.45 by CUT1, hold afterward (reverses naturally on scroll up)
+      const darkT  = clamp01(p / Math.max(1e-6, cut1));     // 0..1 over Scene 0
+      const darkOp = 0.45 * ease(darkT);                     // max darkness
+      // You can tweak the color if you want colder/warmer:
+      window.__grade__?.setTint(darkOp, 'rgb(16,24,32)');    // deep cold base
+      // Optional: add a subtle blue hue lift as we near CUT1
+      const hueOp = 0.22 * ease(darkT);
+      window.__grade__?.setHue(hueOp, 'rgb(70,115,160)');
     }
   });
 
-  // Recompute on resize so the pin length stays accurate
-  window.addEventListener("resize", () => {
-    ScrollTrigger.refresh();
-  });
+  addEventListener("resize", () => ScrollTrigger.refresh());
 })();

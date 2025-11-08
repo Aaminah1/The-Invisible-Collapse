@@ -3653,34 +3653,25 @@ raysPulse.style.opacity = (0.26 * pulseIn).toFixed(3);
  
 
 /* ---------- BACKGROUND GRADING (tint + vignette + HUE) ---------- */
-(function BackgroundGrade(){
+/* ---------- BACKGROUND GRADING (tint + vignette + HUE) ---------- */
+(() => {
   let built = false;
 
   function injectStyle(){
     if (document.getElementById("bggrade-style")) return;
     const css = `
-      #bg #bgGrade{ position: fixed; inset: 0; pointer-events:none; z-index: 2; }
-      #bgGrade .tint{
-        position: fixed; inset: 0;
-        background: #000; opacity: 0; will-change: opacity, background-color;
-      }
+      #bg #bgGrade{ position: fixed; inset:0; pointer-events:none; z-index:2; }
+      #bgGrade .tint{ position:fixed; inset:0; background:#000; opacity:0; will-change:opacity,background-color; }
       #bgGrade .vignette{
-  position: fixed; inset: 0;
-/* softer / disabled vignette */
-  background: radial-gradient(ellipse at 50% 55%,
-    rgba(0,0,0,0) 40%, rgba(0,0,0,0.20) 100%);
-  opacity: 0;                    /* <- keep at 0 to remove vignette */
-  mix-blend-mode: normal;
-  will-change: opacity;
-}
-#bgGrade .hue{
-  position: fixed; inset: 0;
-/* push to cooler blue */
-  background: rgb(80,120,180);
-  opacity: 0;                    /* will be driven in update() */
-  mix-blend-mode: color;
-  will-change: opacity, background-color;
-}
+        position:fixed; inset:0;
+        background: radial-gradient(ellipse at 50% 55%, rgba(0,0,0,0) 40%, rgba(0,0,0,0.20) 100%);
+        opacity:0; mix-blend-mode:normal; will-change:opacity;
+      }
+      #bgGrade .hue{
+        position:fixed; inset:0;
+        background: rgb(80,120,180); /* bluish overlay */
+        opacity:0; mix-blend-mode:color; will-change:opacity,background-color;
+      }
     `;
     const el = document.createElement("style");
     el.id = "bggrade-style";
@@ -3692,90 +3683,68 @@ raysPulse.style.opacity = (0.26 * pulseIn).toFixed(3);
     if (built) return;
     const bg = document.getElementById("bg");
     if (!bg){ console.warn("[Grade] #bg not found."); return; }
-
     injectStyle();
-
     const wrap = document.createElement("div");
     wrap.id = "bgGrade";
-    wrap.innerHTML = `
-      <div class="tint"></div>
-      <div class="hue"></div>
-      <div class="vignette"></div>
-    `;
+    wrap.innerHTML = `<div class="tint"></div><div class="hue"></div><div class="vignette"></div>`;
     bg.appendChild(wrap);
     built = true;
   }
 
   function segInfo(p){
     const s = Math.max(0, Math.min(0.9999, p)) * 3;
-    const seg = Math.floor(s);   // 0: full, 1: mid1->mid2, 2: mid2->bare
-    const t   = s - seg;         // 0..1 inside segment
+    const seg = Math.floor(s);
+    const t   = s - seg;
     return { seg, t };
   }
 
-  const L = (a,b,t)=>a+(b-a)*t;
+  function update(p){
+    build();
+    const { seg, t } = segInfo(p);
+    const tint = document.querySelector("#bgGrade .tint");
+    const hue  = document.querySelector("#bgGrade .hue");
+    const vig  = document.querySelector("#bgGrade .vignette");
+    if (!tint || !vig || !hue) return;
 
-function update(p){
-  build();
-  const { seg, t } = segInfo(p);
-  const tint = document.querySelector("#bgGrade .tint");
-  const hue  = document.querySelector("#bgGrade .hue");
-  const vig  = document.querySelector("#bgGrade .vignette");
-  if (!tint || !vig || !hue) return;
+    // deep cold base + blue overlay
+    const baseColor = `rgb(16,24,32)`;
+    const hueColor  = `rgb(70,115,160)`;
 
-  // ---------- COLOR PRESET: Deep cold blue like the reference ----------
-  // Neutral "dark base" behind everything (very subtle)
-  // If you want deeper, lower the numbers or raise tintOp below slightly.
-  let r = 16, g = 24, b = 32;                       // deep cold base
-  let hueColor = `rgb(70, 115, 160)`;               // bluish overlay (teal-ish)
+    const smooth = x => x*x*(3-2*x);
+    let tintOp = 0, hueOp = 0;
 
-  // ---------- Opacity dials ----------
-  // We keep vignette OFF (0). The blue comes from the HUE layer.
-  let tintOp = 0;   // neutral dark tint strength (keep low to avoid grey)
-  let hueOp  = 0;   // blue strength
-  let vigOp  = 0;   // vignette disabled
+    if (seg === 0){ const tt = smooth(t); tintOp = 0.05*tt; hueOp = 0.18*tt; }
+    else if (seg === 1){ const tt = smooth(t); tintOp = 0.05 + 0.06*tt; hueOp = 0.18 + 0.14*tt; }
+    else { const tt = smooth(t); tintOp = 0.11 + 0.05*tt; hueOp = 0.32 + 0.10*tt; }
 
-  // Ease helper for nice ramps
-  const clamp01 = (x)=>Math.max(0, Math.min(1, x));
-  const smooth = (x)=>x*x*(3-2*x);                  // smoothstep (0..1)
-
-  // We map the three construction segments to a blue ramp,
-  // keeping "tint" small so the blue isn't muddied to grey.
-  if (seg === 0){
-    // Full → mid1 (early construction): very subtle wash
-    const tt = smooth(t);
-    hueOp  = 0.18 * tt;
-    tintOp = 0.05 * tt;                              // tiny depth, avoid greying
-  } else if (seg === 1){
-    // mid1 → mid2: strengthen blue, keep tint modest
-    const tt = smooth(t);
-    hueOp  = 0.18 + 0.14 * tt;                       // 0.18 → 0.32
-    tintOp = 0.05 + 0.06 * tt;                       // 0.05 → 0.11
-  } else {
-    // mid2 → bare: strongest blue, tint still controlled
-    const tt = smooth(t);
-    hueOp  = 0.32 + 0.10 * tt;                       // 0.32 → 0.42
-    tintOp = 0.11 + 0.05 * tt;                       // 0.11 → 0.16
+    tint.style.backgroundColor = baseColor;
+    tint.style.opacity = Math.max(0, Math.min(1, tintOp)).toFixed(3);
+    hue.style.backgroundColor  = hueColor;
+    hue.style.opacity  = Math.max(0, Math.min(1, hueOp)).toFixed(3);
+    vig.style.opacity  = "0"; // vignette disabled
   }
 
-  // Safety clamps
-  hueOp  = clamp01(hueOp);
-  tintOp = clamp01(tintOp);
-  vigOp  = 0;                                        // force vignette OFF
+  function setTint(op=0, color='rgb(16,24,32)'){
+    build();
+    const el = document.querySelector("#bgGrade .tint");
+    if (!el) return;
+    const o = Math.max(0, Math.min(1, op));
+    el.style.backgroundColor = color;
+    el.style.opacity = String(o);
+  }
+  function setHue(op=0, color='rgb(70,115,160)'){
+    build();
+    const el = document.querySelector("#bgGrade .hue");
+    if (!el) return;
+    const o = Math.max(0, Math.min(1, op));
+    el.style.backgroundColor = color;
+    el.style.opacity = String(o);
+  }
 
-  // Apply
-  tint.style.backgroundColor = `rgb(${r}, ${g}, ${b})`;
-  tint.style.opacity = tintOp.toFixed(3);
-
-  hue.style.backgroundColor = hueColor;
-  hue.style.opacity = hueOp.toFixed(3);
-
-  vig.style.opacity = vigOp.toFixed(3);
-}
-
-
-  window.__grade__ = { build, update };
+  // single export
+  window.__grade__ = { build, update, setTint, setHue };
 })();
+
 
 /* ---------- PARALLAX PER-LAYER GRADING (filters on far/mid/near) ---------- */
 (function ParallaxGrade(){
