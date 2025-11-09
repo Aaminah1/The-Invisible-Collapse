@@ -19,10 +19,10 @@
 
   /* ============================ DIALS =========================== */
   const DIALS = {
-    relayVH    : 60,    // length of handoff pin (vh). Lower → lamps sooner (try 40–90)
+    relayVH    : 85,    // length of handoff pin (vh). Lower → lamps sooner (try 40–90)
     cloudPress : 70,    // px clouds press down at peak
     pushScale  : 0.030, // camera push (1 → +3%)
-    pushY      : 40,    // px camera nudges downward
+    pushY      : 50,    // px camera nudges downward
     windShear  : 18,    // cloud sideways shear px/s
 
     coolHue    : -10,   // early cool hue (negative = blue)
